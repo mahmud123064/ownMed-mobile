@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Semantic color tokens.
+ * Values are raw RGB channels (no `rgb()` wrapper) so Tailwind's
+ * `<alpha-value>` opacity modifiers keep working: `bg-surface/60`.
+ */
+@layer base {
+  :root {
+    --color-background: 248 250 252;
+    --color-surface: 255 255 255;
+    --color-surface-muted: 241 245 249;
+    --color-border: 226 232 240;
+    --color-foreground: 15 23 42;
+    --color-muted: 100 116 139;
+  }
+
+  .dark:root {
+    --color-background: 8 15 22;
+    --color-surface: 17 26 36;
+    --color-surface-muted: 30 41 54;
+    --color-border: 40 53 68;
+    --color-foreground: 241 245 249;
+    --color-muted: 148 163 184;
+  }
+}
