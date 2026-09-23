@@ -29,6 +29,22 @@ Run lint and typecheck before declaring any task done.
 - Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
 - Docs: https://docs.expo.dev/router/introduction.md
 
+## App structure
+
+Bottom tab navigator (`src/app/(tabs)/_layout.tsx`) with five tabs:
+
+- **Home** — `index.tsx` (scaffold landing).
+- **Health Tips** — `health-tips.tsx` (wellness tip cards + a "tip of the day").
+- **Dashboard** — `dashboard.tsx` (blank placeholder, "Welcome to Dashboard").
+- **Settings** — `settings.tsx` (Profile static · Theme toggles light/dark via `useAppTheme()` · Language toggles English ↔ Bangla).
+- **Sign In** — `sign-in.tsx` (email/password + "Remember me" + "Forgot password?" + Google OAuth button, validated with `react-hook-form`).
+
+Auth is **UI-only**: the Sign In / Google buttons are placeholder handlers (an `Alert`), not wired to a backend or OAuth credentials yet. The "Are you new? Sign up" footer is a non-functional link.
+
+### Theme
+
+`src/theme/index.ts` exports `useAppTheme()` → `{ isDark, colors, toggleColorScheme }` plus the `brand`/`status` palettes in `src/theme/colors.ts`. Style with NativeWind `className` (CSS variables in `global.css`); reach for `colors`/`brand` only where a raw value is required (icons, navigation chrome).
+
 ## Building with EAS
 
 Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
