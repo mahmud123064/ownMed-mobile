@@ -9,8 +9,8 @@ export default function HomeScreen() {
         <View className="h-16 w-16 items-center justify-center rounded-3xl bg-brand-600">
           <HeartPulse color="#ffffff" size={32} strokeWidth={2} />
         </View>
-        <Text className="text-2xl font-bold text-foreground">OwnMed</Text>
-        <Text className="text-center text-base text-muted">
+        <Text className="text-2xl font-display-bold text-foreground">OwnMed</Text>
+        <Text className="text-center text-base font-sans text-muted">
           Project scaffold is ready. Feature screens get added step by step.
         </Text>
         <View className="mt-2 rounded-full border border-border bg-surface px-4 py-2">

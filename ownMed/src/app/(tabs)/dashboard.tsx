@@ -5,7 +5,7 @@ export default function DashboardScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       <View className="flex-1 items-center justify-center px-6">
-        <Text className="text-2xl font-bold text-foreground">
+        <Text className="text-2xl font-display-bold text-foreground">
           Welcome to Dashboard
         </Text>
       </View>

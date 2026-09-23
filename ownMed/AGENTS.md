@@ -45,6 +45,10 @@ Auth is **UI-only**: the Sign In / Google buttons are placeholder handlers (an `
 
 `src/theme/index.ts` exports `useAppTheme()` → `{ isDark, colors, toggleColorScheme }` plus the `brand`/`status` palettes in `src/theme/colors.ts`. Style with NativeWind `className` (CSS variables in `global.css`); reach for `colors`/`brand` only where a raw value is required (icons, navigation chrome).
 
+### Fonts
+
+**Inter** (primary) and **Manrope** (accent/headings) are loaded in `src/app/_layout.tsx` via `@expo-google-fonts/*`. RN uses a separate file per weight, so `tailwind.config.js` remaps `font-medium`/`font-semibold`/`font-bold` to the matching Inter family (they normally set `fontWeight`, which does nothing here). Use `font-sans` for regular body text and `font-display` / `font-display-bold` for Manrope headings.
+
 ## Building with EAS
 
 Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.

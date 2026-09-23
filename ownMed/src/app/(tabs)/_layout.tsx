@@ -64,7 +64,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="sign-in"
         options={{
-          title: 'Sign In',
+          title: 'Account',
           tabBarIcon: ({ color, size }) => (
             <LogIn color={color} size={size} strokeWidth={2} />
           ),

@@ -3,8 +3,24 @@ module.exports = {
   content: ['./src/**/*.{js,jsx,ts,tsx}'],
   presets: [require('nativewind/preset')],
   darkMode: 'class',
+  corePlugins: {
+    // Weights are separate font files in React Native, so Tailwind's
+    // `fontWeight` utilities are remapped to families below instead.
+    fontWeight: false,
+  },
   theme: {
     extend: {
+      fontFamily: {
+        // Inter — primary body font. Each weight is a distinct family in RN.
+        sans: ['Inter_400Regular'],
+        'sans-medium': ['Inter_500Medium'],
+        'sans-semibold': ['Inter_600SemiBold'],
+        'sans-bold': ['Inter_700Bold'],
+        // Manrope — optional accent / display font for headings.
+        display: ['Manrope_600SemiBold'],
+        'display-bold': ['Manrope_700Bold'],
+        'display-extrabold': ['Manrope_800ExtraBold'],
+      },
       colors: {
         // OwnMed brand — clinical teal.
         brand: {
@@ -39,5 +55,16 @@ module.exports = {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // `font-medium` / `font-semibold` / `font-bold` normally set `fontWeight`,
+    // which does nothing for separate weight files in React Native. Map them
+    // to the matching Inter family instead so existing classes "just work".
+    function ({ addUtilities }) {
+      addUtilities({
+        '.font-medium': { fontFamily: 'Inter_500Medium' },
+        '.font-semibold': { fontFamily: 'Inter_600SemiBold' },
+        '.font-bold': { fontFamily: 'Inter_700Bold' },
+      });
+    },
+  ],
 };
