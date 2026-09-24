@@ -24,7 +24,6 @@ export default function TabsLayout() {
         },
       }}
     >
-     
       <Tabs.Screen
         name="health-tips"
         options={{
@@ -70,6 +69,7 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen name="sign-up" options={{ href: null }} />
     </Tabs>
   );
 }

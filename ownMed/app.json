@@ -27,7 +27,14 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "OwnMed needs access to your photos to set your profile picture.",
+          "cameraPermission": "OwnMed needs access to your camera to take a profile picture."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -1,14 +1,30 @@
-import { Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useState } from "react";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+import DashboardHeader from "@/components/dashboard/DashboardHeader";
+import Drawer from "@/components/dashboard/Drawer";
+import { SECTION_COMPONENTS } from "@/components/dashboard/sections";
+import type { SectionId } from "@/components/dashboard/types";
 
 export default function DashboardScreen() {
-  return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="flex-1 items-center justify-center px-6">
-        <Text className="text-2xl font-display-bold text-foreground">
-          Welcome to Dashboard
-        </Text>
-      </View>
-    </SafeAreaView>
-  );
+    const [active, setActive] = useState<SectionId>("overview");
+    const [drawerOpen, setDrawerOpen] = useState(false);
+
+    const ActiveSection = SECTION_COMPONENTS[active];
+
+    return (
+        <SafeAreaView className="flex-1 bg-background" edges={["top"]}>
+            <DashboardHeader onMenuPress={() => setDrawerOpen(true)} />
+            <ActiveSection />
+            <Drawer
+                open={drawerOpen}
+                active={active}
+                onClose={() => setDrawerOpen(false)}
+                onSelect={(id) => {
+                    setActive(id);
+                    setDrawerOpen(false);
+                }}
+            />
+        </SafeAreaView>
+    );
 }

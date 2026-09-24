@@ -59,14 +59,14 @@ export default function SettingsScreen() {
                 {/* Header */}
                 <View className="px-6 pt-4">
                     <View className="flex-row items-center gap-2">
-                        <SunMoon
+                        {/* <SunMoon
                             color={brand[500]}
                             size={20}
                             strokeWidth={2.2}
-                        />
-                        <Text className="text-sm font-semibold uppercase tracking-wider text-brand-600">
+                        /> */}
+                        {/* <Text className="text-sm font-semibold uppercase tracking-wider text-brand-600">
                             Preferences
-                        </Text>
+                        </Text> */}
                     </View>
                     <Text className="mt-2 text-3xl font-display-bold text-foreground">
                         Settings

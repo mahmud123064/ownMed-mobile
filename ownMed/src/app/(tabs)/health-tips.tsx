@@ -7,7 +7,6 @@ import {
     Dumbbell,
     HeartPulse,
     Moon,
-    Sparkles,
     Sun,
     Wind,
     type LucideIcon,
@@ -115,14 +114,14 @@ export default function HealthTipsScreen() {
                 {/* Header */}
                 <View className="px-6 pt-4">
                     <View className="flex-row items-center gap-2">
-                        <Sparkles
+                        {/* <Sparkles
                             color={brand[500]}
                             size={20}
                             strokeWidth={2.2}
-                        />
-                        <Text className="text-sm font-semibold uppercase tracking-wider text-brand-600">
+                        /> */}
+                        {/* <Text className="text-sm font-semibold uppercase tracking-wider text-brand-600">
                             Daily wellness
-                        </Text>
+                        </Text> */}
                     </View>
                     <Text className="mt-2 text-3xl font-display-bold text-foreground">
                         Health Tips

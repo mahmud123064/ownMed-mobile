@@ -1,5 +1,7 @@
+import { useState } from "react";
+import { Link } from "expo-router";
 import { Controller, useForm } from "react-hook-form";
-import { Check } from "lucide-react-native";
+import { Check, Eye, EyeOff } from "lucide-react-native";
 import {
     Alert,
     KeyboardAvoidingView,
@@ -47,6 +49,7 @@ function GoogleIcon() {
 
 export default function SignInScreen() {
     const { colors } = useAppTheme();
+    const [showPassword, setShowPassword] = useState(false);
     const {
         control,
         handleSubmit,
@@ -149,16 +152,39 @@ export default function SignInScreen() {
                                     render={({
                                         field: { onChange, onBlur, value },
                                     }) => (
-                                        <TextInput
-                                            value={value}
-                                            onChangeText={onChange}
-                                            onBlur={onBlur}
-                                            placeholder="Enter your password"
-                                            placeholderTextColor={colors.muted}
-                                            secureTextEntry
-                                            autoCapitalize="none"
-                                            className="rounded-2xl border border-border bg-surface px-4 py-3 text-base text-foreground"
-                                        />
+                                        <View className="relative">
+                                            <TextInput
+                                                value={value}
+                                                onChangeText={onChange}
+                                                onBlur={onBlur}
+                                                placeholder="Enter your password"
+                                                placeholderTextColor={colors.muted}
+                                                secureTextEntry={!showPassword}
+                                                autoCapitalize="none"
+                                                className="rounded-2xl border border-border bg-surface px-4 py-3 pr-12 text-base text-foreground"
+                                            />
+                                            <Pressable
+                                                onPress={() =>
+                                                    setShowPassword((v) => !v)
+                                                }
+                                                hitSlop={8}
+                                                className="absolute right-0 top-0 bottom-0 justify-center px-4"
+                                            >
+                                                {showPassword ? (
+                                                    <EyeOff
+                                                        color={colors.muted}
+                                                        size={20}
+                                                        strokeWidth={2}
+                                                    />
+                                                ) : (
+                                                    <Eye
+                                                        color={colors.muted}
+                                                        size={20}
+                                                        strokeWidth={2}
+                                                    />
+                                                )}
+                                            </Pressable>
+                                        </View>
                                     )}
                                 />
                                 {errors.password && (
@@ -232,7 +258,7 @@ export default function SignInScreen() {
                             {/* Divider */}
                             <View className="mt-2 flex-row items-center gap-3">
                                 <View className="h-px flex-1 bg-border" />
-                                <Text className="text-xs font-medium text-muted">
+                                <Text className="text-xl font-medium text-muted">
                                     or
                                 </Text>
                                 <View className="h-px flex-1 bg-border" />
@@ -252,12 +278,15 @@ export default function SignInScreen() {
 
                         {/* Footer */}
                         <View className="mt-8 flex-row items-center justify-center gap-1">
-                            <Text className="text-sm font-sans text-muted">
-                                Are you new?
+                            <Text className="text-md font-sans text-muted">
+                                Are you new? 
                             </Text>
-                            <Text className="text-sm font-semibold text-brand-600">
-                                Sign up
-                            </Text>
+                            <Link
+                                href="/sign-up"
+                                className="text-md font-semibold text-brand-700"
+                            >
+                                 Sign up
+                            </Link>
                         </View>
                     </View>
                 </ScrollView>
