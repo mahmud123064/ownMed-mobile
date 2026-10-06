@@ -14,6 +14,7 @@ export default function TabsLayout() {
 
   return (
     <Tabs
+      initialRouteName="index"
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: brand[600],
@@ -42,7 +43,7 @@ export default function TabsLayout() {
           ),
         }}
       />
-       <Tabs.Screen
+      <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
@@ -70,6 +71,7 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen name="sign-up" options={{ href: null }} />
+      <Tabs.Screen name="forgot-password" options={{ href: null }} />
     </Tabs>
   );
 }

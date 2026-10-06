@@ -23,10 +23,8 @@ import type {
 
 export const MOCK_USER: UserProfile = {
     name: "Rahim Uddin",
-    role: "Patient",
     email: "rahim@example.com",
     phone: "+880 1712-345678",
-    avatar: null,
 };
 
 export const HEALTH_SUMMARY: HealthStat[] = [

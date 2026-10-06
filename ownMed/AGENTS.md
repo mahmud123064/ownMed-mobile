@@ -31,15 +31,44 @@ Run lint and typecheck before declaring any task done.
 
 ## App structure
 
-Bottom tab navigator (`src/app/(tabs)/_layout.tsx`) with five tabs:
+Bottom tab navigator (`src/app/(tabs)/_layout.tsx`) with five tabs, in order: **Health Tips · Dashboard · Home · Settings · Account**. **Home** (`index.tsx`) is the opening tab — it is declared with `initialRouteName="index"` and sits in the middle position.
 
-- **Home** — `index.tsx` (scaffold landing).
-- **Health Tips** — `health-tips.tsx` (wellness tip cards + a "tip of the day").
-- **Dashboard** — `dashboard.tsx` (blank placeholder, "Welcome to Dashboard").
-- **Settings** — `settings.tsx` (Profile static · Theme toggles light/dark via `useAppTheme()` · Language toggles English ↔ Bangla).
-- **Sign In** — `sign-in.tsx` (email/password + "Remember me" + "Forgot password?" + Google OAuth button, validated with `react-hook-form`).
+- **Health Tips** — `health-tips.tsx`: a featured "tip of the day" (rotates by calendar date) plus a grid of wellness cards.
+- **Dashboard** — `dashboard.tsx`: a drawer-driven screen that swaps between feature sections (see below).
+- **Home** — `index.tsx`: the landing page — brand header, hero card, a "what you can do" feature grid, a wellness-tip strip, a trust row, and a medical disclaimer. Feature cards link into `/dashboard`.
+- **Settings** — `settings.tsx`: Profile (static), Theme (toggles light/dark via `useAppTheme()`), Language (toggles English ↔ Bangla).
+- **Account** — `sign-in.tsx`: email/password + "Remember me" + "Forgot password?" (validated with `react-hook-form`). Footer links to the hidden `sign-up` route (`sign-up.tsx`, `href: null`); "Forgot password?" opens the hidden `forgot-password` route (`forgot-password.tsx`, `href: null`).
 
-Auth is **UI-only**: the Sign In / Google buttons are placeholder handlers (an `Alert`), not wired to a backend or OAuth credentials yet. The "Are you new? Sign up" footer is a non-functional link.
+### Dashboard
+
+`dashboard.tsx` holds an `active` section id and renders the matching component from `SECTION_COMPONENTS` (`src/components/dashboard/sections.ts`); a slide-in `Drawer` switches sections. Published sections:
+
+- **Overview** — health-stat cards + recent activity.
+- **Profile** — avatar, personal info, change password.
+- **Add Medicine** — local `useState` list (adds/removes medicines).
+- **Upload Prescription** — image picker (max 5 images).
+- **Family Member Status** — list + local add form.
+
+**Find Doctor, Find Pharmacy, Find Hospital, and Appointments are intentionally not published in this release.** Their section components and mock data remain in `src/components/dashboard/sections/` and `src/components/dashboard/mock.ts` so they can be re-enabled later — just re-add them to `sections.ts` and to the `SectionId` union in `src/components/dashboard/types.ts`.
+
+### Onboarding
+
+`src/components/onboarding/OnboardingModal.tsx` renders on first launch (mounted in `src/app/_layout.tsx`). It is a 3-step walkthrough — how-to-use (the five tabs), guest vs. account, and health details (weight, blood pressure, height, gender) with a Skip option. Gated on an `onboarded` flag persisted via AsyncStorage.
+
+### State & persistence
+
+- `src/lib/storage.ts` — typed AsyncStorage wrapper. Keys are namespaced (`ownmed.*`). The `onboarded` key is versioned (`.v2`) so bumping it re-shows the walkthrough. Holds `authUser` + `authTokens` (refresh token) for persisted sessions.
+- `src/lib/api.ts` — typed `fetch` client (`register`, `login`, `requestPasswordReset`, `confirmPasswordReset`, `logout`). Base URL auto-detects from Expo's `hostUri` (LAN IP) with a null override for manual config.
+- `src/context/AppDataContext.tsx` — `AppDataProvider` + `useAppData()` exposing `hydrated`, `onboarded`, `healthProfile`, `authUser`, and actions `completeOnboarding`, `skipOnboarding`, `register`, `signIn` (takes a `rememberMe` flag), `requestPasswordReset`, `confirmPasswordReset`, `signOut`. Wraps the whole app in `src/app/_layout.tsx`.
+- **Guest vs. registered.** Guest data (health profile, onboarding) lives only in AsyncStorage and is lost on uninstall. Registering/signing in calls the backend and persists the returned `authUser` + tokens locally — but only when "Remember me" is checked; otherwise the session is in memory and lost on restart. Guest health-data sync is a `TODO(backend)` in `storage.ts` (the server has no health-profile routes yet).
+
+Auth: **Sign In / Sign Up are wired to the backend** (`sign-in.tsx` and `sign-up.tsx` call `signIn`/`register` from `lib/api.ts`, then `router.replace('/dashboard')`). `signIn` takes a `rememberMe` flag — unchecked (default) keeps the session in memory only, checked persists it to AsyncStorage. **Forgot password** (`forgot-password.tsx`) sends a Resend-emailed 6-digit code via `/auth/password-reset/*`. **Sign out** (the avatar menu in `DashboardHeader`) revokes the refresh token via `/auth/logout` and returns to `/sign-in`. Google sign-in has been removed and will be re-implemented later.
+
+The onboarding `healthProfile` feeds **Dashboard → Overview**: weight and blood pressure are overridden when present; other stats fall back to `HEALTH_SUMMARY` mock values.
+
+### Backend
+
+The API lives in **`ownMed_server/`** — a separate npm project (Express 5 + TypeScript + Neon PostgreSQL) with its own `AGENTS.md`. Auth is live (`/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`, `/auth/password-reset/*`); the app calls all of these except `/auth/refresh` via `src/lib/api.ts`. Domain routes (health profiles, medicines, prescriptions, family members) are not built yet.
 
 ### Theme
 
@@ -48,6 +77,10 @@ Auth is **UI-only**: the Sign In / Google buttons are placeholder handlers (an `
 ### Fonts
 
 **Inter** (primary) and **Manrope** (accent/headings) are loaded in `src/app/_layout.tsx` via `@expo-google-fonts/*`. RN uses a separate file per weight, so `tailwind.config.js` remaps `font-medium`/`font-semibold`/`font-bold` to the matching Inter family (they normally set `fontWeight`, which does nothing here). Use `font-sans` for regular body text and `font-display` / `font-display-bold` for Manrope headings.
+
+### Shared components
+
+- `src/components/ui/FormField.tsx` — labelled `TextInput` with a leading icon and shared focus/error border + icon states. Used by sign-in, sign-up, forgot-password, and the onboarding modal. Prefer it over ad-hoc text fields for new forms.
 
 ## Building with EAS
 

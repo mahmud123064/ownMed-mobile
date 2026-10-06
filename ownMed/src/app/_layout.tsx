@@ -16,6 +16,9 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import '../../global.css';
 
+import OnboardingModal from '@/components/onboarding/OnboardingModal';
+import { AppDataProvider } from '@/context/AppDataContext';
+
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
@@ -34,10 +37,13 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="(tabs)" />
-        </Stack>
-        <StatusBar style="auto" />
+        <AppDataProvider>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="(tabs)" />
+          </Stack>
+          <OnboardingModal />
+          <StatusBar style="auto" />
+        </AppDataProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

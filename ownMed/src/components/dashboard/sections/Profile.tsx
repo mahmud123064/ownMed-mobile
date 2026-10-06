@@ -30,7 +30,7 @@ type PasswordForm = {
 
 export default function Profile() {
     const { colors } = useAppTheme();
-    const [avatar, setAvatar] = useState<string | null>(MOCK_USER.avatar);
+    const [avatar, setAvatar] = useState<string | null>(null);
     const [showCurrent, setShowCurrent] = useState(false);
     const [showNext, setShowNext] = useState(false);
     const [showConfirm, setShowConfirm] = useState(false);

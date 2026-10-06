@@ -1,5 +1,6 @@
 import { ScrollView, Text, View } from "react-native";
 
+import { useAppData } from "@/context/AppDataContext";
 import { brand } from "@/theme";
 
 import { HEALTH_SUMMARY, RECENT_ACTIVITY } from "../mock";
@@ -70,6 +71,26 @@ function ActivityRow({ item }: { item: ActivityItem }) {
 }
 
 export default function Overview() {
+    const { healthProfile } = useAppData();
+
+    const stats = HEALTH_SUMMARY.map((stat) => {
+        if (!healthProfile) return stat;
+        if (stat.id === "weight" && healthProfile.weightKg) {
+            return { ...stat, value: healthProfile.weightKg };
+        }
+        if (
+            stat.id === "bp" &&
+            healthProfile.bloodPressureSys &&
+            healthProfile.bloodPressureDia
+        ) {
+            return {
+                ...stat,
+                value: `${healthProfile.bloodPressureSys}/${healthProfile.bloodPressureDia}`,
+            };
+        }
+        return stat;
+    });
+
     return (
         <ScrollView
             showsVerticalScrollIndicator={false}
@@ -85,7 +106,7 @@ export default function Overview() {
                 </Text>
 
                 <View className="mt-5 flex-row flex-wrap justify-between gap-y-3">
-                    {HEALTH_SUMMARY.map((stat) => (
+                    {stats.map((stat) => (
                         <StatCard key={stat.id} stat={stat} />
                     ))}
                 </View>

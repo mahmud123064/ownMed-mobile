@@ -8,6 +8,7 @@ import {
     View,
 } from "react-native";
 
+import { useAppData } from "@/context/AppDataContext";
 import { brand, useAppTheme } from "@/theme";
 
 import { MOCK_USER } from "./mock";
@@ -25,6 +26,8 @@ const DRAWER_WIDTH = 288;
 
 export default function Drawer({ open, active, onClose, onSelect }: Props) {
     const { colors } = useAppTheme();
+    const { authUser } = useAppData();
+    const user = authUser ?? MOCK_USER;
     const [translateX] = useState(() => new Animated.Value(-DRAWER_WIDTH));
     const [backdrop] = useState(() => new Animated.Value(0));
 
@@ -43,7 +46,7 @@ export default function Drawer({ open, active, onClose, onSelect }: Props) {
         ]).start();
     }, [open, translateX, backdrop]);
 
-    const initials = MOCK_USER.name
+    const initials = user.name
         .split(" ")
         .map((w) => w[0])
         .slice(0, 2)
@@ -66,7 +69,7 @@ export default function Drawer({ open, active, onClose, onSelect }: Props) {
                     width: DRAWER_WIDTH,
                     transform: [{ translateX }],
                 }}
-                className="absolute bottom-0 left-0 top-0 bg-surface"
+                className="absolute bottom-0 left-0 top-0 bg-surface pt-8"
             >
                 <View className="flex-row items-center justify-between border-b border-border px-5 py-5">
                     <View className="flex-row items-center gap-3">
@@ -77,10 +80,10 @@ export default function Drawer({ open, active, onClose, onSelect }: Props) {
                         </View>
                         <View>
                             <Text className="text-base font-semibold text-foreground">
-                                {MOCK_USER.name}
+                                {user.name}
                             </Text>
                             <Text className="text-xs font-sans text-muted">
-                                {MOCK_USER.email}
+                                {user.email}
                             </Text>
                         </View>
                     </View>

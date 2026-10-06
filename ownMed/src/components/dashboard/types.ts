@@ -5,10 +5,6 @@ export type SectionId =
     | "profile"
     | "add-medicine"
     | "upload-prescription"
-    | "find-doctor"
-    | "find-pharmacy"
-    | "find-hospital"
-    | "appointments"
     | "family";
 
 export type Section = {
@@ -88,9 +84,9 @@ export type FamilyMember = {
 };
 
 export type UserProfile = {
+    /** Present for users created by the backend; absent for the local mock user. */
+    id?: string;
     name: string;
-    role: string;
     email: string;
     phone: string;
-    avatar: string | null;
 };

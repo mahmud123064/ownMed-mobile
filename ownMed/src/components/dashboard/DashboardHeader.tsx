@@ -1,9 +1,8 @@
 import { useRef, useState } from "react";
+import { router } from "expo-router";
 import { LogOut, Menu, User } from "lucide-react-native";
 import {
-    Alert,
     Dimensions,
-    Image,
     Modal,
     Pressable,
     Text,
@@ -11,6 +10,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useAppData } from "@/context/AppDataContext";
 import { status, useAppTheme } from "@/theme";
 
 import { MOCK_USER } from "./mock";
@@ -28,6 +28,8 @@ function greeting(): string {
 
 export default function DashboardHeader({ onMenuPress }: Props) {
     const { colors } = useAppTheme();
+    const { authUser, signOut } = useAppData();
+    const user = authUser ?? MOCK_USER;
     const insets = useSafeAreaInsets();
     const [accountOpen, setAccountOpen] = useState(false);
     const [anchor, setAnchor] = useState({ top: insets.top + 60, right: 16 });
@@ -46,7 +48,8 @@ export default function DashboardHeader({ onMenuPress }: Props) {
 
     const handleLogout = () => {
         setAccountOpen(false);
-        Alert.alert("Logout", "Sign out is not wired up yet.");
+        void signOut();
+        router.replace("/sign-in");
     };
 
     return (
@@ -65,7 +68,7 @@ export default function DashboardHeader({ onMenuPress }: Props) {
                         {greeting()}
                     </Text>
                     <Text className="text-base font-semibold text-foreground">
-                        {MOCK_USER.name}
+                        {user.name}
                     </Text>
                 </View>
 
@@ -75,14 +78,7 @@ export default function DashboardHeader({ onMenuPress }: Props) {
                     hitSlop={8}
                     className="h-11 w-11 items-center justify-center overflow-hidden rounded-full bg-brand-600"
                 >
-                    {MOCK_USER.avatar ? (
-                        <Image
-                            source={{ uri: MOCK_USER.avatar }}
-                            className="h-full w-full"
-                        />
-                    ) : (
-                        <User color="#ffffff" size={22} strokeWidth={2} />
-                    )}
+                    <User color="#ffffff" size={22} strokeWidth={2} />
                 </Pressable>
             </View>
 
@@ -104,10 +100,10 @@ export default function DashboardHeader({ onMenuPress }: Props) {
                         <View className="w-64 overflow-hidden rounded-2xl border border-border bg-surface ">
                             <View className="px-4 py-3">
                                 <Text className="text-sm font-semibold text-foreground">
-                                    {MOCK_USER.name}
+                                    {user.name}
                                 </Text>
                                 <Text className="mt-0.5 text-xs font-sans text-muted">
-                                    {MOCK_USER.email}
+                                    {user.email}
                                 </Text>
                             </View>
                             <View className="h-px bg-border" />
