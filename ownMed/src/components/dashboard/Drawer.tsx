@@ -11,7 +11,7 @@ import {
 import { useAppData } from "@/context/AppDataContext";
 import { brand, useAppTheme } from "@/theme";
 
-import { MOCK_USER } from "./mock";
+import { GUEST_USER } from "./mock";
 import { SECTIONS } from "./sections";
 import type { SectionId } from "./types";
 
@@ -27,7 +27,7 @@ const DRAWER_WIDTH = 288;
 export default function Drawer({ open, active, onClose, onSelect }: Props) {
     const { colors } = useAppTheme();
     const { authUser } = useAppData();
-    const user = authUser ?? MOCK_USER;
+    const user = authUser ?? GUEST_USER;
     const [translateX] = useState(() => new Animated.Value(-DRAWER_WIDTH));
     const [backdrop] = useState(() => new Animated.Value(0));
 

@@ -5,8 +5,13 @@ import {
     useState,
     type ReactNode,
 } from "react";
+import * as Crypto from "expo-crypto";
 
-import type { UserProfile } from "@/components/dashboard/types";
+import type {
+    FamilyMember,
+    Medicine,
+    UserProfile,
+} from "@/components/dashboard/types";
 import {
     api,
     type AuthResponse,
@@ -14,19 +19,31 @@ import {
     type PasswordResetConfirmInput,
     type PasswordResetRequestInput,
     type RegisterInput,
+    type SyncData,
 } from "@/lib/api";
+import { recoverFromLocal } from "@/lib/medicineSchedule";
 import {
     clearAuthTokens,
     loadAuthTokens,
     loadAuthUser,
+    loadFamilyMembers,
     loadHealthProfile,
+    loadMedicines,
     loadOnboarded,
+    loadSyncPending,
     saveAuthUser,
     saveAuthTokens,
+    saveFamilyMembers,
     saveHealthProfile,
+    saveMedicines,
     saveOnboarded,
+    saveSyncPending,
     type HealthProfile,
 } from "@/lib/storage";
+
+/** What a form supplies; the id is generated here. */
+type MedicineInput = Omit<Medicine, "id">;
+type FamilyMemberInput = Pick<FamilyMember, "name" | "relation" | "age">;
 
 type AppData = {
     /** True once the values below have been loaded from storage. */
@@ -34,8 +51,14 @@ type AppData = {
     onboarded: boolean;
     healthProfile: HealthProfile | null;
     authUser: UserProfile | null;
+    medicines: Medicine[];
+    familyMembers: FamilyMember[];
+    /** True when local data has not reached the server yet (a sync failed). */
+    syncPending: boolean;
     completeOnboarding: (profile: HealthProfile) => void;
     skipOnboarding: () => void;
+    addMedicine: (input: MedicineInput) => void;
+    addFamilyMember: (input: FamilyMemberInput) => void;
     register: (input: RegisterInput) => Promise<void>;
     signIn: (input: LoginInput, rememberMe: boolean) => Promise<void>;
     requestPasswordReset: (input: PasswordResetRequestInput) => Promise<void>;
@@ -52,21 +75,31 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         null,
     );
     const [authUser, setAuthUser] = useState<UserProfile | null>(null);
+    const [medicines, setMedicines] = useState<Medicine[]>([]);
+    const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+    const [syncPending, setSyncPending] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
 
         (async () => {
             try {
-                const [o, profile, user] = await Promise.all([
-                    loadOnboarded(),
-                    loadHealthProfile(),
-                    loadAuthUser(),
-                ]);
+                const [o, profile, user, meds, members, pending] =
+                    await Promise.all([
+                        loadOnboarded(),
+                        loadHealthProfile(),
+                        loadAuthUser(),
+                        loadMedicines(),
+                        loadFamilyMembers(),
+                        loadSyncPending(),
+                    ]);
                 if (cancelled) return;
                 setOnboarded(o);
                 setHealthProfile(profile);
                 setAuthUser(user);
+                setMedicines(meds);
+                setFamilyMembers(members);
+                setSyncPending(pending);
             } catch {
                 // Storage read failed — fall back to defaults and keep going.
             } finally {
@@ -91,6 +124,64 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         saveOnboarded(true);
     };
 
+    const addMedicine = (input: MedicineInput) => {
+        // Client-generated id: it must exist before the row ever reaches the
+        // server, so a later sync can upsert it idempotently.
+        const medicine: Medicine = { id: Crypto.randomUUID(), ...input };
+        const next = [medicine, ...medicines];
+        setMedicines(next);
+        void saveMedicines(next);
+    };
+
+    const addFamilyMember = (input: FamilyMemberInput) => {
+        const member: FamilyMember = {
+            id: Crypto.randomUUID(),
+            ...input,
+            healthStatus: "No data yet",
+            status: "stable",
+        };
+        const next = [member, ...familyMembers];
+        setFamilyMembers(next);
+        void saveFamilyMembers(next);
+    };
+
+    /** Adopt the server's view of the account as the new local truth. */
+    const applyServerState = (data: SyncData) => {
+        // A null profile means the account still has none; keep whatever the
+        // device already had rather than dropping it.
+        const profile = data.healthProfile ?? healthProfile;
+        // The merge is add-only, so a medicine synced before schedules or start
+        // dates existed sits on the server blank. The device copy is the last
+        // record of what the user set — don't let the blank row erase it.
+        const merged = recoverFromLocal(data.medicines, medicines);
+        setHealthProfile(profile);
+        setMedicines(merged);
+        setFamilyMembers(data.familyMembers);
+        if (profile) void saveHealthProfile(profile);
+        void saveMedicines(merged);
+        void saveFamilyMembers(data.familyMembers);
+    };
+
+    /**
+     * Guest-to-account sync. Pushes the whole local snapshot and adopts the
+     * merged result. Best-effort: a failure must never block signing in, so we
+     * just flag that local data is still unsynced and let the next sign-in retry.
+     */
+    const syncWithAccount = async (accessToken: string) => {
+        try {
+            const data = await api.postSync(
+                { healthProfile, medicines, familyMembers },
+                accessToken,
+            );
+            applyServerState(data);
+            setSyncPending(false);
+            await saveSyncPending(false).catch(() => {});
+        } catch {
+            setSyncPending(true);
+            await saveSyncPending(true).catch(() => {});
+        }
+    };
+
     const persistSession = async (
         { user, accessToken, refreshToken }: AuthResponse,
         remember: boolean,
@@ -110,11 +201,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
 
     const register = async (input: RegisterInput) => {
-        await persistSession(await api.register(input), true);
+        const auth = await api.register(input);
+        await persistSession(auth, true);
+        await syncWithAccount(auth.accessToken);
     };
 
     const signIn = async (input: LoginInput, rememberMe: boolean) => {
-        await persistSession(await api.login(input), rememberMe);
+        const auth = await api.login(input);
+        await persistSession(auth, rememberMe);
+        await syncWithAccount(auth.accessToken);
     };
 
     const requestPasswordReset = async (input: PasswordResetRequestInput) => {
@@ -132,6 +227,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         if (tokens?.refreshToken) {
             await api.logout(tokens.refreshToken).catch(() => {});
         }
+        // Note: local health data is intentionally kept on sign-out. It is this
+        // device's cache of the account, and wiping it would lose anything that
+        // never made it to the server.
         setAuthUser(null);
         await Promise.all([saveAuthUser(null), clearAuthTokens()]);
     };
@@ -143,8 +241,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 onboarded,
                 healthProfile,
                 authUser,
+                medicines,
+                familyMembers,
+                syncPending,
                 completeOnboarding,
                 skipOnboarding,
+                addMedicine,
+                addFamilyMember,
                 register,
                 signIn,
                 requestPasswordReset,

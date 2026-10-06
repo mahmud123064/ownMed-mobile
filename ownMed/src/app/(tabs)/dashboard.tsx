@@ -5,6 +5,7 @@ import DashboardHeader from "@/components/dashboard/DashboardHeader";
 import Drawer from "@/components/dashboard/Drawer";
 import { SECTION_COMPONENTS } from "@/components/dashboard/sections";
 import type { SectionId } from "@/components/dashboard/types";
+import GuestBackupBanner from "@/components/ui/GuestBackupBanner";
 
 export default function DashboardScreen() {
     const [active, setActive] = useState<SectionId>("overview");
@@ -15,6 +16,7 @@ export default function DashboardScreen() {
     return (
         <SafeAreaView className="flex-1 bg-background" edges={["top"]}>
             <DashboardHeader onMenuPress={() => setDrawerOpen(true)} />
+            <GuestBackupBanner />
             <ActiveSection />
             <Drawer
                 open={drawerOpen}

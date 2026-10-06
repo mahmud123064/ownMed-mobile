@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { router } from "expo-router";
-import { LogOut, Menu, User } from "lucide-react-native";
+import { LogIn, LogOut, Menu, User } from "lucide-react-native";
 import {
     Dimensions,
     Modal,
@@ -11,9 +11,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAppData } from "@/context/AppDataContext";
-import { status, useAppTheme } from "@/theme";
+import { brand, status, useAppTheme } from "@/theme";
 
-import { MOCK_USER } from "./mock";
+import { GUEST_USER } from "./mock";
 
 type Props = {
     onMenuPress: () => void;
@@ -29,7 +29,7 @@ function greeting(): string {
 export default function DashboardHeader({ onMenuPress }: Props) {
     const { colors } = useAppTheme();
     const { authUser, signOut } = useAppData();
-    const user = authUser ?? MOCK_USER;
+    const user = authUser ?? GUEST_USER;
     const insets = useSafeAreaInsets();
     const [accountOpen, setAccountOpen] = useState(false);
     const [anchor, setAnchor] = useState({ top: insets.top + 60, right: 16 });
@@ -46,9 +46,10 @@ export default function DashboardHeader({ onMenuPress }: Props) {
         });
     };
 
-    const handleLogout = () => {
+    // Guests have no session to end, so the same menu row offers sign-in.
+    const handleAccountAction = () => {
         setAccountOpen(false);
-        void signOut();
+        if (authUser) void signOut();
         router.replace("/sign-in");
     };
 
@@ -108,17 +109,32 @@ export default function DashboardHeader({ onMenuPress }: Props) {
                             </View>
                             <View className="h-px bg-border" />
                             <Pressable
-                                onPress={handleLogout}
+                                onPress={handleAccountAction}
                                 className="flex-row items-center gap-2 px-4 py-3"
                             >
-                                <LogOut
-                                    color={status.danger}
-                                    size={16}
-                                    strokeWidth={2}
-                                />
-                                <Text className="text-sm font-semibold text-danger">
-                                    Logout
-                                </Text>
+                                {authUser ? (
+                                    <>
+                                        <LogOut
+                                            color={status.danger}
+                                            size={16}
+                                            strokeWidth={2}
+                                        />
+                                        <Text className="text-sm font-semibold text-danger">
+                                            Logout
+                                        </Text>
+                                    </>
+                                ) : (
+                                    <>
+                                        <LogIn
+                                            color={brand[600]}
+                                            size={16}
+                                            strokeWidth={2}
+                                        />
+                                        <Text className="text-sm font-semibold text-brand-600">
+                                            Sign in
+                                        </Text>
+                                    </>
+                                )}
                             </Pressable>
                         </View>
                     </View>

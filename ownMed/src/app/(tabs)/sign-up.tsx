@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, router } from "expo-router";
 import { Controller, useForm } from "react-hook-form";
 import {
+    CloudUpload,
     Eye,
     EyeOff,
     HeartPulse,
@@ -335,6 +336,19 @@ export default function SignUpScreen() {
                                             : "Create Account"}
                                     </Text>
                                 </Pressable>
+                            </View>
+
+                            {/* Guest data is pushed to the new account on success. */}
+                            <View className="mt-6 flex-row items-start gap-2 rounded-2xl bg-surface-muted px-4 py-3">
+                                <CloudUpload
+                                    color={brand[600]}
+                                    size={16}
+                                    strokeWidth={2}
+                                />
+                                <Text className="flex-1 text-xs leading-relaxed font-sans text-muted">
+                                    Your medicines and health data on this device
+                                    will be synced to your new account.
+                                </Text>
                             </View>
 
                             {/* Footer */}

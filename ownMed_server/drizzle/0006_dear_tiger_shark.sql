@@ -1,0 +1,1 @@
+ALTER TABLE "medicines" ADD COLUMN "times" text[] DEFAULT '{}'::text[] NOT NULL;

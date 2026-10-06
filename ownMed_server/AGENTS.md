@@ -9,7 +9,7 @@ npm start          # node dist/index.js (run `npm run build` first)
 npm run typecheck  # tsc --noEmit
 ```
 
-There is no test runner wired up yet.
+There is no test runner wired up yet. Changes are verified against a running server instead: start `npm run dev` and drive the real routes with `fetch` from a throwaway `.mjs` script in a temp directory — register a throwaway account, push through `/sync`, and assert on the response. This is worth doing for any schema or validation change, because the API's failure mode is quiet: the sync payload validates as a whole, so one malformed row 400s an entire push rather than that one row. Beware that this writes rows owned by the throwaway account into whatever database `DATABASE_URL` points at, and there is no delete path.
 
 ## Layout
 
@@ -111,6 +111,31 @@ Token model (refresh rotation):
 - **Refresh token** — opaque 48-byte random string, stored only as a sha256 hash in `refresh_tokens`; rotating deletes the old row and inserts a new one, so reuse after rotation fails.
 - Passwords are hashed with bcryptjs (12 rounds); emails are normalized (trim + lowercase) before storage/lookup.
 
+## Sync (`/sync`)
+
+Both routes require `authenticate` and operate on `req.user!.id`:
+
+- `GET /sync` — the account's state: `{ healthProfile, medicines, familyMembers }`.
+- `POST /sync` — accepts a partial snapshot, merges it, and returns the **merged** state, so the client can adopt the response wholesale instead of tracking what changed.
+
+The merge is **add-only and idempotent**. Ids are client-generated UUIDs, so `POST`-ing the same payload twice must not duplicate rows — medicines and family members use `.onConflictDoNothing()` (which also means an id already owned by another user is silently skipped, never reassigned), and `health_profiles` has a unique index on `user_id` so a returning account's profile is never clobbered by an anonymous device.
+
+A medicine is `{ id, name, dosage, times, days, startedOn, endedOn }` — two independent schedule axes plus a date range:
+
+- `times` — `text[]` of 24h `"HH:mm"` strings, 0–24 entries matching `^([01]\d|2[0-3]):[0-5]\d$`. **Frequency is not a column** — the client derives it as `times.length`, so the two cannot drift. Returned sorted.
+- `days` — `integer[]` of weekdays (`Date.getDay()` values, 0=Sun..6=Sat), 1–7 entries each 0–6, column default `'{0,1,2,3,4,5,6}'`. Returned sorted ascending.
+- `startedOn` / `endedOn` — `"YYYY-MM-DD"` calendar-date strings, not timestamps (they are dates, so an instant type would only add timezone conversion). Stored **NULL** when unknown; `""` on the wire. A blank `endedOn` means the course is ongoing, which is the normal case, not a missing value.
+
+Note `times` allows an **empty** array on purpose. The client's form requires at least one time, but that is a UX rule, not a data invariant: rows written before the schedule model existed have none, and the server already returns such rows. A `min(1)` here let the server hold a state it refused to accept back — and because the payload is validated as a whole, one schedule-less medicine failed the *entire* sync. Keep the write path at least as permissive as the read path.
+
+`days`, `startedOn` and `endedOn` are **optional with defaults**, unlike `times`. An already-installed client sends `{ id, name, dosage, times }` with none of them; requiring them would 400 that device's whole sync for the same reason above. They default to all-7 days and `""`, and the insert maps the blank dates to `null`.
+
+Dates go through `calendarDateSchema`, which checks the shape *and* that the day exists — the regex alone accepts `2026-02-30`, so the value is round-tripped through `Date` in UTC and must come back unchanged. The blank case is handled by `optionalCalendarDateSchema`, a union with `z.literal("")`: `.default("")` only covers an *absent* key, so an explicit `""` — which is exactly what the client sends for "no end date" — would otherwise fail the regex and take the whole payload down with it.
+
+The `frequency`/`time` columns it replaced were dropped in migrations `0005` and `0006`; because drizzle-kit cannot tell an added column from a rename without a TTY, the drop and the add were generated as two separate migrations rather than one interactive pass. `days` and `started_on` arrived in `0007`, and `ended_on` in `0008` — both plain column adds, so they generated non-interactively.
+
+There are no per-resource CRUD routes and **no delete path** — a record removed on the device will reappear from the server on the next sync. Adding deletes means adding tombstones or a real `DELETE` route, not just filtering the client array.
+
 ## Not built yet
 
-Remaining work: the domain routes (health profiles, medicines, prescriptions, family members), and finishing the app-side auth loop (token auto-refresh is still mock in `ownMed`). The Expo app currently calls `/auth/register`, `/auth/login`, `/auth/password-reset/*`, and `/auth/logout`; it does not yet call `/auth/refresh`.
+Remaining work: per-resource CRUD (health profiles, medicines, prescriptions, family members) and file storage — the spec's Cloudflare R2 layer is not implemented, so prescription images never leave the device. On the app side, token auto-refresh is still missing: the Expo app calls `/auth/register`, `/auth/login`, `/auth/password-reset/*`, `/auth/logout`, and `/sync`, but never `/auth/refresh`.

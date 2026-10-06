@@ -1,0 +1,1 @@
+ALTER TABLE "medicines" ADD COLUMN "ended_on" text;

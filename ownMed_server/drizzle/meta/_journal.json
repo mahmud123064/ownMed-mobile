@@ -29,6 +29,41 @@
       "when": 1791245393865,
       "tag": "0003_harsh_overlord",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791304702640,
+      "tag": "0004_slim_mephistopheles",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791310887617,
+      "tag": "0005_faulty_bug",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791310902591,
+      "tag": "0006_dear_tiger_shark",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791312347298,
+      "tag": "0007_daily_mattie_franklin",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791313315487,
+      "tag": "0008_talented_morlocks",
+      "breakpoints": true
     }
   ]
 }

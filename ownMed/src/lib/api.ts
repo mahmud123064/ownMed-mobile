@@ -1,6 +1,12 @@
 import Constants from "expo-constants";
 
-import type { UserProfile } from "@/components/dashboard/types";
+import type {
+    FamilyMember,
+    Medicine,
+    UserProfile,
+} from "@/components/dashboard/types";
+
+import type { HealthProfile } from "./storage";
 
 const API_PORT = 4000;
 
@@ -50,6 +56,20 @@ export type AuthResponse = {
     user: UserProfile;
     accessToken: string;
     refreshToken: string;
+};
+
+/** What the client pushes up: only the parts it actually has. */
+export type SyncPayload = {
+    healthProfile?: HealthProfile | null;
+    medicines?: Medicine[];
+    familyMembers?: FamilyMember[];
+};
+
+/** The account's full state, as the server sees it. */
+export type SyncData = {
+    healthProfile: HealthProfile | null;
+    medicines: Medicine[];
+    familyMembers: FamilyMember[];
 };
 
 /** Error thrown for non-2xx responses (statusCode 0 = network failure). */
@@ -120,5 +140,17 @@ export const api = {
         request<void>("/auth/logout", {
             method: "POST",
             body: JSON.stringify({ refreshToken }),
+        }),
+    /** Pull the account's server-side state (used on sign-in). */
+    getSync: (accessToken: string): Promise<SyncData> =>
+        request<SyncData>("/sync", {
+            headers: { authorization: `Bearer ${accessToken}` },
+        }),
+    /** Push local data up and get the merged state back. */
+    postSync: (input: SyncPayload, accessToken: string): Promise<SyncData> =>
+        request<SyncData>("/sync", {
+            method: "POST",
+            headers: { authorization: `Bearer ${accessToken}` },
+            body: JSON.stringify(input),
         }),
 };

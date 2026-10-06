@@ -35,8 +35,29 @@ export type Medicine = {
     id: string;
     name: string;
     dosage: string;
-    frequency: string;
-    time: string;
+    /**
+     * Scheduled reminder times, as 24h "HH:mm" strings, sorted ascending and
+     * unique. Frequency is *derived* from this (`times.length`) rather than
+     * stored, so a medicine can never claim a dose count its schedule
+     * contradicts.
+     */
+    times: string[];
+    /**
+     * Weekdays the medicine is taken, as `Date.getDay()` values (0=Sun..6=Sat),
+     * sorted ascending. A weekday left out is a day it is *not* taken.
+     */
+    days: number[];
+    /**
+     * The calendar date the medicine was started, "YYYY-MM-DD" in local time —
+     * a date rather than an instant, so it is stored as a plain string.
+     */
+    startedOn: string;
+    /**
+     * The date the course ends, same shape as `startedOn`. An empty string means
+     * the course is **ongoing** — which is the norm for a chronic medicine, so
+     * this is a real state and not a missing value.
+     */
+    endedOn: string;
 };
 
 export type Doctor = {

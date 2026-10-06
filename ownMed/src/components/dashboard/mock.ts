@@ -27,6 +27,16 @@ export const MOCK_USER: UserProfile = {
     phone: "+880 1712-345678",
 };
 
+/**
+ * Shown while no account is signed in. Guests see this rather than MOCK_USER,
+ * so the app never presents demo identity as if it belonged to the user.
+ */
+export const GUEST_USER: UserProfile = {
+    name: "Guest",
+    email: "Not signed in",
+    phone: "",
+};
+
 export const HEALTH_SUMMARY: HealthStat[] = [
     {
         id: "hr",
@@ -97,27 +107,36 @@ export const RECENT_ACTIVITY: ActivityItem[] = [
     },
 ];
 
+// No longer seeded into the app: medicines and family members are real user
+// data now (see AppDataContext). Kept as sample fixtures for the unpublished
+// Find/Appointments surfaces and for reference.
 export const MEDICINES: Medicine[] = [
     {
         id: "1",
         name: "Paracetamol 500mg",
         dosage: "1 tablet",
-        frequency: "Twice daily",
-        time: "08:00, 20:00",
+        times: ["08:00", "20:00"],
+        days: [0, 1, 2, 3, 4, 5, 6],
+        startedOn: "2026-09-01",
+        endedOn: "",
     },
     {
         id: "2",
         name: "Amlodipine 5mg",
         dosage: "1 tablet",
-        frequency: "Once daily",
-        time: "09:00",
+        times: ["09:00"],
+        days: [6, 0, 1, 2, 3, 4],
+        startedOn: "2026-08-15",
+        endedOn: "",
     },
     {
         id: "3",
         name: "Metformin 500mg",
         dosage: "1 tablet",
-        frequency: "Twice daily",
-        time: "10:00, 22:00",
+        times: ["10:00", "22:00"],
+        days: [6, 0, 1, 2, 3, 4, 5],
+        startedOn: "2026-07-20",
+        endedOn: "2026-12-20",
     },
 ];
 

@@ -1,19 +1,9 @@
-import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { Plus, Users } from "lucide-react-native";
-import {
-    Alert,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    View,
-} from "react-native";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
+import { useAppData } from "@/context/AppDataContext";
 import { brand, status, useAppTheme } from "@/theme";
-
-import { FAMILY_MEMBERS } from "../mock";
-import type { FamilyMember } from "../types";
 
 type MemberForm = {
     name: string;
@@ -23,26 +13,19 @@ type MemberForm = {
 
 export default function FamilyMembers() {
     const { colors } = useAppTheme();
-    const [members, setMembers] = useState<FamilyMember[]>(FAMILY_MEMBERS);
+    const { familyMembers, addFamilyMember } = useAppData();
 
     const form = useForm<MemberForm>({
         defaultValues: { name: "", relation: "", age: "" },
     });
 
     const onAdd = (data: MemberForm) => {
-        setMembers((prev) => [
-            {
-                id: String(Date.now()),
-                name: data.name,
-                relation: data.relation,
-                age: Number(data.age) || 0,
-                healthStatus: "No data yet",
-                status: "stable",
-            },
-            ...prev,
-        ]);
+        addFamilyMember({
+            name: data.name,
+            relation: data.relation,
+            age: Number(data.age) || 0,
+        });
         form.reset();
-        Alert.alert("Family member", "Member added (demo).");
     };
 
     return (
@@ -60,7 +43,13 @@ export default function FamilyMembers() {
                 </Text>
 
                 <View className="mt-5 gap-3">
-                    {members.map((member) => (
+                    {familyMembers.length === 0 && (
+                        <Text className="py-6 text-center text-sm font-sans text-muted">
+                            No family members yet. Add one below to track their
+                            health.
+                        </Text>
+                    )}
+                    {familyMembers.map((member) => (
                         <View
                             key={member.id}
                             className="flex-row items-center gap-3 rounded-3xl border border-border bg-surface p-4"

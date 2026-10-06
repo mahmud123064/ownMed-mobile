@@ -120,8 +120,9 @@ function AccountStep() {
                         </Text>
                     </View>
                     <Text className="mt-2 text-xs leading-relaxed font-sans text-muted">
-                        Without signing in, your data is saved only on this
-                        device and will be lost if you uninstall the app.
+                        Without signing in, your medicines and health details
+                        are saved only on this device. Uninstalling the app
+                        removes them permanently.
                     </Text>
                 </View>
                 <View className="rounded-2xl border border-brand-600 bg-brand-600/10 p-4">
@@ -136,8 +137,8 @@ function AccountStep() {
                         </Text>
                     </View>
                     <Text className="mt-2 text-xs leading-relaxed font-sans text-muted">
-                        Sign up to keep your data and get it back after
-                        reinstalling the app.
+                        Create an account to securely back up your data and
+                        access it after reinstalling the app.
                     </Text>
                 </View>
             </View>
