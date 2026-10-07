@@ -1,4 +1,4 @@
-import type { Medicine } from "@/components/dashboard/types";
+import type { MealTiming, Medicine } from "@/components/dashboard/types";
 
 /**
  * Schedule helpers shared by the Add Medicine form and the reminder table.
@@ -33,6 +33,16 @@ export const WEEK_DAYS = [
 
 /** Every weekday, ascending — the default for a medicine taken daily. */
 export const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+/**
+ * When a medicine can be taken relative to food, in the order the form offers
+ * them. Deliberately just these two: they are what a prescription actually says,
+ * and a third option nobody uses would only slow the choice down.
+ */
+export const MEAL_TIMINGS = [
+    { value: "before", label: "Before meal" },
+    { value: "after", label: "After meal" },
+] as const;
 
 /** Today as a local "YYYY-MM-DD" (not UTC — the user's calendar day). */
 export function todayISO(): string {
@@ -207,6 +217,22 @@ export function endedOnOf(medicine: Medicine): string {
 }
 
 /**
+ * A medicine's meal timing, defensively — see `timesOf`. Anything that is not
+ * one of the two known values reads as "not recorded" rather than being passed
+ * through, mirroring how the server normalizes the column on the way out.
+ */
+export function mealTimingOf(medicine: Medicine): MealTiming {
+    return medicine.mealTiming === "before" || medicine.mealTiming === "after"
+        ? medicine.mealTiming
+        : "";
+}
+
+/** How a meal timing reads, e.g. "Before meal"; "" when not recorded. */
+export function mealTimingLabel(value: MealTiming): string {
+    return MEAL_TIMINGS.find((option) => option.value === value)?.label ?? "";
+}
+
+/**
  * Refill blanks in a server-supplied medicine from the device's copy.
  *
  * Medicines synced before a field existed are stored blank — `times` empty, or
@@ -219,6 +245,16 @@ export function endedOnOf(medicine: Medicine): string {
  * `days` is not recovered: its blank state is the all-7 default, which already
  * means "every day", and since there is no edit path the two copies cannot
  * diverge.
+ *
+ * `doctorName` / `specialty` are not recovered either, for a different reason:
+ * no medicine already on the server can have had a prescriber recorded, since
+ * the fields did not exist when it was pushed and there is no edit path to add
+ * one — so the device has nothing to refill them from. Anything the device does
+ * know is carried by the next push, which sends the whole local list.
+ *
+ * `mealTiming` is in that same group, for the same reason: a medicine on the
+ * server with a NULL timing predates the column, so the device copy is blank
+ * too and there is nothing to recover.
  *
  * The recovery is device-local. Until medicines can be updated server-side
  * (the merge has no update path), the server copy stays blank and this runs

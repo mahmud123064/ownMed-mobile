@@ -25,6 +25,10 @@ export const MOCK_USER: UserProfile = {
     name: "Rahim Uddin",
     email: "rahim@example.com",
     phone: "+880 1712-345678",
+    gender: "male",
+    bloodGroup: "O+",
+    dateOfBirth: "1985-03-12",
+    shareId: "RHIM4K7P",
 };
 
 /**
@@ -35,6 +39,9 @@ export const GUEST_USER: UserProfile = {
     name: "Guest",
     email: "Not signed in",
     phone: "",
+    gender: "",
+    bloodGroup: "",
+    dateOfBirth: "",
 };
 
 export const HEALTH_SUMMARY: HealthStat[] = [
@@ -119,6 +126,9 @@ export const MEDICINES: Medicine[] = [
         days: [0, 1, 2, 3, 4, 5, 6],
         startedOn: "2026-09-01",
         endedOn: "",
+        doctorName: "",
+        specialty: "",
+        mealTiming: "",
     },
     {
         id: "2",
@@ -128,6 +138,9 @@ export const MEDICINES: Medicine[] = [
         days: [6, 0, 1, 2, 3, 4],
         startedOn: "2026-08-15",
         endedOn: "",
+        doctorName: "Dr. Farhana Islam",
+        specialty: "Cardiology",
+        mealTiming: "before",
     },
     {
         id: "3",
@@ -137,6 +150,9 @@ export const MEDICINES: Medicine[] = [
         days: [6, 0, 1, 2, 3, 4, 5],
         startedOn: "2026-07-20",
         endedOn: "2026-12-20",
+        doctorName: "Dr. Kamal Hossain",
+        specialty: "Medicine",
+        mealTiming: "after",
     },
 ];
 

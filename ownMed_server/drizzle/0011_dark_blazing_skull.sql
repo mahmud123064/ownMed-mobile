@@ -1,0 +1,1 @@
+ALTER TABLE "medicines" ADD COLUMN "meal_timing" text;

@@ -15,6 +15,8 @@ import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendPasswordResetEmail } from "../utils/email.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
+import { generateUniqueShareId } from "../utils/shareId.js";
+import { calendarDateSchema } from "./sync.js";
 import {
   generateResetCode,
   hashRefreshToken,
@@ -75,13 +77,63 @@ const passwordResetConfirmSchema = z.object({
     .max(200),
 });
 
-/** Strip the password hash before a user ever leaves the server. */
+/**
+ * The blood groups a user can pick, as the client stores them — the literal
+ * label, so there is no enum to translate on the way through. `""` is the
+ * unset state, the same convention the rest of this API uses for a blank.
+ */
+const BLOOD_GROUP_VALUES = [
+  "A+",
+  "A-",
+  "B+",
+  "B-",
+  "AB+",
+  "AB-",
+  "O+",
+  "O-",
+  "",
+] as const;
+
+const genderValues = ["male", "female", "other", ""] as const;
+
+/**
+ * The editable half of a profile.
+ *
+ * Every field is optional because this is a partial update — the client sends
+ * only what changed — and absent keys are left alone rather than blanked. Email
+ * is deliberately not here: it is the account's identity and the unique index
+ * on it means changing it is a different feature (re-verification), not a
+ * profile edit.
+ */
+const updateProfileSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(120).optional(),
+  phone: z.string().trim().max(30).optional(),
+  gender: z.enum(genderValues).optional(),
+  bloodGroup: z.enum(BLOOD_GROUP_VALUES).optional(),
+  // Note: *not* `optionalCalendarDateSchema`, which defaults an absent key to
+  // `""`. That default is right for sync, where the client always sends the
+  // whole record, but here it would silently clear the date on every partial
+  // update that did not mention it. Absent must mean "leave alone".
+  dateOfBirth: z.union([calendarDateSchema, z.literal("")]).optional(),
+});
+
+/**
+ * Strip the password hash before a user ever leaves the server.
+ *
+ * The nullable columns are handed over as `""` rather than `null`, matching how
+ * every other blank in this API travels (see `toMedicine`): the client's fields
+ * are all strings, so one shape avoids empty-string↔null conversion bugs.
+ */
 function toPublicUser(user: User) {
   return {
     id: user.id,
     name: user.name,
     email: user.email,
-    phone: user.phone,
+    phone: user.phone ?? "",
+    shareId: user.shareId ?? "",
+    gender: user.gender ?? "",
+    bloodGroup: user.bloodGroup ?? "",
+    dateOfBirth: user.dateOfBirth ?? "",
   };
 }
 
@@ -107,6 +159,10 @@ authRouter.post(
         email: input.email,
         passwordHash,
         phone: input.phone ?? null,
+        // Every account gets one up front: it is how a family member is given
+        // access, and a user who had to "create" it later could not share the
+        // ID they had already read out.
+        shareId: await generateUniqueShareId(),
       })
       .returning();
 
@@ -199,6 +255,40 @@ authRouter.get(
       .from(users)
       .where(eq(users.id, req.user!.id))
       .limit(1);
+    if (!user) {
+      throw ApiError.notFound("User not found");
+    }
+    res.json({ user: toPublicUser(user) });
+  }),
+);
+
+authRouter.patch(
+  "/me",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const input = validate(updateProfileSchema, req.body);
+
+    // Build the update from the keys actually present, so a partial payload
+    // leaves the fields it omits untouched. `undefined` is the "not provided"
+    // marker; a provided `""` is a real value (an unset blood group) and must
+    // survive, which is why this checks `key in input` rather than truthiness.
+    const update: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
+    if (input.name !== undefined) update.name = input.name;
+    if (input.phone !== undefined) update.phone = input.phone || null;
+    if (input.gender !== undefined) update.gender = input.gender || null;
+    if (input.bloodGroup !== undefined) {
+      update.bloodGroup = input.bloodGroup || null;
+    }
+    if (input.dateOfBirth !== undefined) {
+      update.dateOfBirth = input.dateOfBirth || null;
+    }
+
+    const [user] = await db
+      .update(users)
+      .set(update)
+      .where(eq(users.id, req.user!.id))
+      .returning();
+
     if (!user) {
       throw ApiError.notFound("User not found");
     }

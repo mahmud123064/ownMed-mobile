@@ -58,6 +58,21 @@ export type AuthResponse = {
     refreshToken: string;
 };
 
+/** The editable half of a profile. Omitted keys are left untouched. */
+export type UpdateProfileInput = {
+    name?: string;
+    phone?: string;
+    gender?: string;
+    bloodGroup?: string;
+    dateOfBirth?: string;
+};
+
+/** Who a Family ID belongs to, as resolved by `connectFamily`. */
+export type FamilyContact = {
+    shareId: string;
+    name: string;
+};
+
 /** What the client pushes up: only the parts it actually has. */
 export type SyncPayload = {
     healthProfile?: HealthProfile | null;
@@ -68,6 +83,18 @@ export type SyncPayload = {
 /** The account's full state, as the server sees it. */
 export type SyncData = {
     healthProfile: HealthProfile | null;
+    medicines: Medicine[];
+    familyMembers: FamilyMember[];
+};
+
+/**
+ * The two collections a linked family member shares.
+ *
+ * Deliberately narrower than `SyncData`: the health profile is the account
+ * owner's own medical data and is never exposed to whoever holds their Family
+ * ID, so the server returns it only on `/sync`.
+ */
+export type FamilyData = {
     medicines: Medicine[];
     familyMembers: FamilyMember[];
 };
@@ -151,6 +178,40 @@ export const api = {
         request<SyncData>("/sync", {
             method: "POST",
             headers: { authorization: `Bearer ${accessToken}` },
+            body: JSON.stringify(input),
+        }),
+    /** Update the account's editable profile fields. */
+    updateProfile: (
+        input: UpdateProfileInput,
+        accessToken: string,
+    ): Promise<{ user: UserProfile }> =>
+        request<{ user: UserProfile }>("/auth/me", {
+            method: "PATCH",
+            headers: { authorization: `Bearer ${accessToken}` },
+            body: JSON.stringify(input),
+        }),
+    /**
+     * Resolve a Family ID to its owner, without pulling any of their data.
+     *
+     * Unauthenticated on purpose: a guest who has just installed the app can
+     * manage a relative's medicines without an account of their own — the code
+     * is the credential.
+     */
+    connectFamily: (shareId: string): Promise<FamilyContact> =>
+        request<FamilyContact>("/family/connect", {
+            method: "POST",
+            body: JSON.stringify({ shareId }),
+        }),
+    /** Read the linked account's medicines and family members. */
+    getFamily: (shareId: string): Promise<FamilyData> =>
+        request<FamilyData>(`/family/${encodeURIComponent(shareId)}`),
+    /** Append to the linked account's data; returns the merged result. */
+    postFamily: (
+        shareId: string,
+        input: { medicines?: Medicine[]; familyMembers?: FamilyMember[] },
+    ): Promise<FamilyData> =>
+        request<FamilyData>(`/family/${encodeURIComponent(shareId)}`, {
+            method: "POST",
             body: JSON.stringify(input),
         }),
 };

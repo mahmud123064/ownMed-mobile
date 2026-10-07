@@ -19,6 +19,8 @@ export type DateFieldProps = {
     clearable?: boolean;
     /** Earliest selectable date. */
     minimumDate?: Date;
+    /** Latest selectable date — e.g. today, for a date of birth. */
+    maximumDate?: Date;
     error?: string;
 };
 
@@ -38,6 +40,7 @@ export default function DateField({
     placeholder = "Select a date",
     clearable = false,
     minimumDate,
+    maximumDate,
     error,
 }: DateFieldProps) {
     const { colors, isDark } = useAppTheme();
@@ -60,6 +63,7 @@ export default function DateField({
                 mode: "date",
                 display: "calendar",
                 minimumDate,
+                maximumDate,
                 onValueChange: (_event, date) => commit(date),
             });
             return;
@@ -133,6 +137,7 @@ export default function DateField({
                                 mode="date"
                                 display="inline"
                                 minimumDate={minimumDate}
+                                maximumDate={maximumDate}
                                 accentColor={brand[600]}
                                 themeVariant={isDark ? "dark" : "light"}
                                 // Fires on every tap, so the value tracks the

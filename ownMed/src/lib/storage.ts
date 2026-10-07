@@ -29,6 +29,9 @@ const KEYS = {
     authTokens: "ownmed.authTokens",
     medicines: "ownmed.medicines",
     familyMembers: "ownmed.familyMembers",
+    // The family member whose data this device is currently managing, set by
+    // entering their Family ID. Persisted so the link survives a restart.
+    familyLink: "ownmed.familyLink",
     // Set when a post-auth sync fails, so the next sign-in knows to push again.
     syncPending: "ownmed.syncPending",
 } as const;
@@ -177,6 +180,19 @@ export function normalizeMedicine(raw: unknown): Medicine | null {
         days,
         startedOn,
         endedOn,
+        // Both are optional by nature (an OTC medicine has no prescriber), so a
+        // missing or non-string value is simply "not recorded" — there is no
+        // bad state to salvage, only a blank one.
+        doctorName:
+            typeof record.doctorName === "string" ? record.doctorName : "",
+        specialty: typeof record.specialty === "string" ? record.specialty : "",
+        // Same as the prescriber fields, with one extra rule: only the two known
+        // values survive. A stray value would otherwise be sent back to a server
+        // that rejects it, failing the whole sync payload over one bad row.
+        mealTiming:
+            record.mealTiming === "before" || record.mealTiming === "after"
+                ? record.mealTiming
+                : "",
     };
 }
 
@@ -208,6 +224,43 @@ export async function saveFamilyMembers(
     members: FamilyMember[],
 ): Promise<void> {
     await AsyncStorage.setItem(KEYS.familyMembers, JSON.stringify(members));
+}
+
+/**
+ * A family member whose data this device is managing, identified by their
+ * shareable Family ID. `name` is cached purely so the UI can label the link
+ * ("Managing Salma") without a round trip.
+ */
+export type FamilyLink = {
+    shareId: string;
+    name: string;
+};
+
+export async function loadFamilyLink(): Promise<FamilyLink | null> {
+    const raw = await AsyncStorage.getItem(KEYS.familyLink);
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw) as Partial<FamilyLink>;
+        // A link with no code is not a link — treat a half-written record as
+        // "not linked" rather than letting an empty id reach the server.
+        if (typeof parsed.shareId !== "string" || parsed.shareId === "") {
+            return null;
+        }
+        return {
+            shareId: parsed.shareId,
+            name: typeof parsed.name === "string" ? parsed.name : "",
+        };
+    } catch {
+        return null;
+    }
+}
+
+export async function saveFamilyLink(link: FamilyLink | null): Promise<void> {
+    if (link === null) {
+        await AsyncStorage.removeItem(KEYS.familyLink);
+    } else {
+        await AsyncStorage.setItem(KEYS.familyLink, JSON.stringify(link));
+    }
 }
 
 export async function loadSyncPending(): Promise<boolean> {

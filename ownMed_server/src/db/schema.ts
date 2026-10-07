@@ -27,6 +27,17 @@ export const users = pgTable(
     // Nullable: reserved for future password-less sign-in (e.g. Google).
     passwordHash: text("password_hash"),
     phone: text("phone"),
+    // The shareable "Family ID": a short uppercase code another account (or a
+    // guest) can enter to manage this user's medicines and family members.
+    // Nullable only because rows written before the column existed have none —
+    // every registration sets one, and the migration backfills the rest. The
+    // unique index is what keeps two accounts from sharing a code.
+    shareId: text("share_id"),
+    // Identity fields the user can edit from Profile. All nullable, all sent
+    // as "" on the wire — see `toPublicUser` in routes/auth.ts.
+    gender: text("gender"),
+    bloodGroup: text("blood_group"),
+    dateOfBirth: text("date_of_birth"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -34,7 +45,10 @@ export const users = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [uniqueIndex("users_email_unique").on(table.email)],
+  (table) => [
+    uniqueIndex("users_email_unique").on(table.email),
+    uniqueIndex("users_share_id_unique").on(table.shareId),
+  ],
 );
 
 export const refreshTokens = pgTable(
@@ -147,6 +161,16 @@ export const medicines = pgTable(
     // end date, which is the norm for a chronic medicine, so it is the default
     // rather than a missing value.
     endedOn: text("ended_on"),
+    // Who prescribed it. Nullable because an over-the-counter medicine has no
+    // prescriber — a normal case, not a gap — and rows written before these
+    // columns existed have none either. `""` on the wire.
+    doctorName: text("doctor_name"),
+    specialty: text("specialty"),
+    // Whether it is taken before or after food ("before" | "after"). Nullable
+    // for the same reason as the prescriber fields: plenty of medicines have no
+    // meal relation at all, and rows written before this column existed have
+    // none recorded. `""` on the wire.
+    mealTiming: text("meal_timing"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

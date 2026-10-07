@@ -47,8 +47,13 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Home',
+          // Home is the tab the app opens on, so it is drawn a size up from its
+          // neighbours — a larger icon plus a heavier label is what makes it
+          // read as the current one at a glance. `size` is the navigator's
+          // default, so the offset keeps working if that default ever changes.
+          tabBarLabelStyle: { fontSize: 13, fontWeight: '600' },
           tabBarIcon: ({ color, size }) => (
-            <House color={color} size={size} strokeWidth={2} />
+            <House color={color} size={size + 5} strokeWidth={2.25} />
           ),
         }}
       />
