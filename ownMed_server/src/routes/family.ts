@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db, users } from "../db/index.js";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { connectLimiter } from "../utils/rateLimit.js";
 import { normalizeShareId } from "../utils/shareId.js";
 import { validate } from "../utils/validate.js";
 import { domainSnapshot, domainWriteSchema, mergeDomain } from "./sync.js";
@@ -55,6 +56,7 @@ async function userByShareId(shareId: string) {
  */
 familyRouter.post(
   "/connect",
+  connectLimiter,
   asyncHandler(async (req, res) => {
     const { shareId } = validate(connectSchema, req.body);
     const user = await userByShareId(shareId);

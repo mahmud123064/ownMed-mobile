@@ -36,6 +36,19 @@ export const env = Object.freeze({
   // password-reset routes return a clear error until these are set.
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   resendFrom: process.env.RESEND_FROM ?? "OwnMed <onboarding@resend.dev>",
+  // Browser origins allowed to call the API, comma-separated. The mobile app
+  // sends no `Origin` and is never subject to CORS, so an empty list costs it
+  // nothing; in production an empty list is a deny for web clients.
+  corsOrigins: (process.env.CORS_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin !== ""),
+  // Set true only when a reverse proxy sits in front of this process. Without
+  // it the proxy's address is the client address as far as Express is
+  // concerned, so every caller would share one rate-limit bucket; with it set
+  // when nothing rewrites `X-Forwarded-For`, a client can forge its own IP and
+  // bypass the limit — hence opt-in rather than on by default.
+  trustProxy: (process.env.TRUST_PROXY ?? "false") === "true",
 });
 
 export type Env = typeof env;

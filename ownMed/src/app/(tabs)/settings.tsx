@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { router } from "expo-router";
 import {
     ChevronRight,
     Languages,
+    RefreshCw,
     SunMoon,
     User,
     type LucideIcon,
@@ -9,6 +11,7 @@ import {
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useAppData } from "@/context/AppDataContext";
 import { brand, useAppTheme } from "@/theme";
 
 type SettingItem = {
@@ -21,10 +24,32 @@ type SettingItem = {
 
 export default function SettingsScreen() {
     const { isDark, colors, toggleColorScheme } = useAppTheme();
+    const { hydrated, authUser } = useAppData();
     const [language, setLanguage] = useState<"English" | "Bangla">("English");
+
+    /**
+     * Only a guest sees this row. Syncing is not an action of its own here —
+     * it happens as part of signing in, where the local snapshot is pushed to
+     * `/sync` — so it exists to take a guest to that screen. A signed-in user
+     * is already synced, and would gain nothing from it.
+     *
+     * Gated on `hydrated` too, so a remembered session doesn't flash the row
+     * during the moment before `authUser` is read back from storage.
+     */
+    const showSync = hydrated && !authUser;
 
     const items: SettingItem[] = [
         { id: "profile", icon: User, label: "Profile" },
+        ...(showSync
+            ? [
+                  {
+                      id: "sync",
+                      icon: RefreshCw,
+                      label: "Synchronise",
+                      onPress: () => router.navigate("/sign-in"),
+                  },
+              ]
+            : []),
         {
             id: "theme",
             icon: SunMoon,

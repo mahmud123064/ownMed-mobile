@@ -85,6 +85,13 @@
       "when": 1791400610809,
       "tag": "0011_dark_blazing_skull",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791477923166,
+      "tag": "0012_numerous_scarecrow",
+      "breakpoints": true
     }
   ]
 }

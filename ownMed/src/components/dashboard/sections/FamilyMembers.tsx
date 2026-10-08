@@ -320,6 +320,14 @@ export default function FamilyMembers() {
                                     value: /^[0-9]{1,3}$/,
                                     message: "Enter a valid age.",
                                 },
+                                // The pattern alone accepts 999. The server caps
+                                // the column at 150, so anything above it would
+                                // be rejected there instead — with a confusing
+                                // error, and only once the whole sync payload
+                                // fails. Match the bound locally.
+                                validate: (value) =>
+                                    Number(value) <= 150 ||
+                                    "Enter an age up to 150.",
                             }}
                             render={({
                                 field: { onChange, onBlur, value },

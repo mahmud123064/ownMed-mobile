@@ -84,6 +84,10 @@ export const passwordResetTokens = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     // sha256 hex of the 6-digit reset code — never the code itself.
     tokenHash: text("token_hash").notNull(),
+    // Failed guesses against this code. Six digits is only a million
+    // possibilities, so without a cap the confirm endpoint is a searchable
+    // space; at the cap the row is deleted and a fresh code must be requested.
+    attempts: integer("attempts").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

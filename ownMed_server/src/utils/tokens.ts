@@ -1,9 +1,15 @@
-import { createHash, randomBytes, randomInt } from "node:crypto";
+import {
+  createHash,
+  randomBytes,
+  randomInt,
+  timingSafeEqual,
+} from "node:crypto";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import { eq } from "drizzle-orm";
 
 import { env } from "../config/env.js";
 import { db, refreshTokens, type User } from "../db/index.js";
+import { ApiError } from "./ApiError.js";
 
 export type AccessTokenPayload = {
   sub: string;
@@ -62,6 +68,23 @@ export function hashResetCode(code: string): string {
   return createHash("sha256").update(code).digest("hex");
 }
 
+/**
+ * Compare a submitted reset code against the stored hash, in constant time.
+ *
+ * Both sides are sha256 hex digests, so they are always the same length and
+ * `timingSafeEqual` applies directly. A plain `===` returns as soon as two
+ * bytes differ, which leaks how much of the digest a guess got right — a real
+ * head start when the search space is only a million codes.
+ */
+export function resetCodeMatches(code: string, storedHash: string): boolean {
+  const submitted = Buffer.from(hashResetCode(code), "hex");
+  const stored = Buffer.from(storedHash, "hex");
+  // A malformed or truncated stored hash decodes short; comparing lengths
+  // first keeps `timingSafeEqual` from throwing on a mismatch.
+  if (submitted.length !== stored.length) return false;
+  return timingSafeEqual(submitted, stored);
+}
+
 const RESET_CODE_TTL_MS = 15 * 60 * 1000;
 
 export function resetCodeExpiry(): Date {
@@ -89,16 +112,25 @@ export async function issueTokenPair(
 }
 
 /**
- * Rotates a refresh token: revokes the old one and issues a new pair. Reusing
- * an already-rotated token simply misses the delete and still mints a pair, so
- * callers must look up the row first (they do — see the /refresh route).
+ * Rotates a refresh token: revokes the old one and issues a new pair.
+ *
+ * The delete is the guard, not a cleanup step. `returning` reports whether this
+ * caller is the one that actually consumed the token, so a token replayed after
+ * its rotation — or two requests racing with it, which both pass the route's
+ * SELECT — is rejected instead of quietly minting a second live pair.
  */
 export async function rotateTokenPair(
   user: User,
   oldTokenHash: string,
 ): Promise<{ accessToken: string; refreshToken: string }> {
-  await db
+  const revoked = await db
     .delete(refreshTokens)
-    .where(eq(refreshTokens.tokenHash, oldTokenHash));
+    .where(eq(refreshTokens.tokenHash, oldTokenHash))
+    .returning({ id: refreshTokens.id });
+
+  if (revoked.length === 0) {
+    throw ApiError.unauthorized("Refresh token already used");
+  }
+
   return issueTokenPair(user);
 }

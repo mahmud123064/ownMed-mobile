@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { env } from "../config/env.js";
@@ -15,6 +15,13 @@ import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendPasswordResetEmail } from "../utils/email.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
+import {
+  changePasswordLimiter,
+  loginLimiter,
+  passwordResetConfirmLimiter,
+  passwordResetRequestLimiter,
+  registerLimiter,
+} from "../utils/rateLimit.js";
 import { generateUniqueShareId } from "../utils/shareId.js";
 import { calendarDateSchema } from "./sync.js";
 import {
@@ -23,11 +30,22 @@ import {
   hashResetCode,
   issueTokenPair,
   resetCodeExpiry,
+  resetCodeMatches,
   rotateTokenPair,
 } from "../utils/tokens.js";
 import { validate } from "../utils/validate.js";
 
 export const authRouter = Router();
+
+/**
+ * How many wrong guesses a single reset code survives.
+ *
+ * Deliberately small: the code is six digits, so the whole space is a million
+ * values and a handful of tries per code is the difference between a search and
+ * a guess. The cost of being wrong is one extra "request a new code", which is
+ * exactly what a user who mistyped wants anyway.
+ */
+const MAX_RESET_CODE_ATTEMPTS = 5;
 
 // Loose-but-sane email check (mirrors the app's own validation).
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -71,6 +89,14 @@ const passwordResetConfirmSchema = z.object({
     .toLowerCase()
     .regex(EMAIL_RE, "Invalid email address"),
   code: z.string().regex(/^\d{6}$/, "Reset code must be 6 digits"),
+  newPassword: z
+    .string()
+    .min(6, "Password must be at least 6 characters")
+    .max(200),
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
   newPassword: z
     .string()
     .min(6, "Password must be at least 6 characters")
@@ -139,6 +165,7 @@ function toPublicUser(user: User) {
 
 authRouter.post(
   "/register",
+  registerLimiter,
   asyncHandler(async (req, res) => {
     const input = validate(registerSchema, req.body);
 
@@ -173,6 +200,7 @@ authRouter.post(
 
 authRouter.post(
   "/login",
+  loginLimiter,
   asyncHandler(async (req, res) => {
     const input = validate(loginSchema, req.body);
 
@@ -296,8 +324,59 @@ authRouter.patch(
   }),
 );
 
+/**
+ * Change the password from a signed-in session, confirming the current one.
+ *
+ * Distinct from `/password-reset/*`, which exists for the case where the user
+ * cannot sign in at all. This one is the ordinary path and costs knowing the
+ * old password rather than reading an inbox.
+ */
+authRouter.post(
+  "/change-password",
+  authenticate,
+  changePasswordLimiter,
+  asyncHandler(async (req, res) => {
+    const { currentPassword, newPassword } = validate(
+      changePasswordSchema,
+      req.body,
+    );
+
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, req.user!.id))
+      .limit(1);
+    if (!user) {
+      throw ApiError.notFound("User not found");
+    }
+
+    // A null hash is an account with no password — the column is nullable for a
+    // future password-less sign-in — so there is no current one to confirm.
+    if (
+      !user.passwordHash ||
+      !(await verifyPassword(currentPassword, user.passwordHash))
+    ) {
+      throw ApiError.unauthorized("Current password is incorrect");
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    await db
+      .update(users)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(users.id, user.id));
+    // Sign out the other sessions. The caller's own access token keeps working
+    // until it expires — a JWT is stateless, so there is nothing to revoke — and
+    // that is the intended trade: the refresh tokens are what an attacker would
+    // be sitting on, and they are gone.
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, user.id));
+
+    res.json({ message: "Password updated" });
+  }),
+);
+
 authRouter.post(
   "/password-reset/request",
+  passwordResetRequestLimiter,
   asyncHandler(async (req, res) => {
     if (!env.resendApiKey || !env.resendFrom) {
       throw new ApiError(503, "Password reset is not configured");
@@ -336,6 +415,7 @@ authRouter.post(
 
 authRouter.post(
   "/password-reset/confirm",
+  passwordResetConfirmLimiter,
   asyncHandler(async (req, res) => {
     const { email, code, newPassword } = validate(
       passwordResetConfirmSchema,
@@ -354,19 +434,40 @@ authRouter.post(
       throw ApiError.badRequest("Invalid or expired reset code");
     }
 
-    const tokenHash = hashResetCode(code);
+    // Fetched by user rather than by hash. Matching on the hash in the WHERE
+    // clause returns no row for a wrong guess, which is indistinguishable from
+    // having no code at all — and it is precisely the wrong guess that has to
+    // be counted. `request` deletes any earlier code, so there is at most one.
     const [token] = await db
       .select()
       .from(passwordResetTokens)
-      .where(
-        and(
-          eq(passwordResetTokens.userId, user.id),
-          eq(passwordResetTokens.tokenHash, tokenHash),
-        ),
-      )
+      .where(eq(passwordResetTokens.userId, user.id))
       .limit(1);
 
-    if (!token || token.expiresAt.getTime() < Date.now()) {
+    const valid =
+      token !== undefined &&
+      token.expiresAt.getTime() >= Date.now() &&
+      resetCodeMatches(code, token.tokenHash);
+
+    if (!valid) {
+      if (token) {
+        const attempts = token.attempts + 1;
+        if (attempts >= MAX_RESET_CODE_ATTEMPTS) {
+          // Burn the code rather than keep counting. Reaching the cap means the
+          // code is being searched, not mistyped, and leaving it in place would
+          // just let the search continue; the real owner requests a fresh one.
+          await db
+            .delete(passwordResetTokens)
+            .where(eq(passwordResetTokens.id, token.id));
+        } else {
+          await db
+            .update(passwordResetTokens)
+            .set({ attempts })
+            .where(eq(passwordResetTokens.id, token.id));
+        }
+      }
+      // No row to charge (never requested, or already burned) — the per-IP
+      // limiter is the only bound there, which is why it exists.
       throw ApiError.badRequest("Invalid or expired reset code");
     }
 
@@ -375,6 +476,10 @@ authRouter.post(
       .update(users)
       .set({ passwordHash, updatedAt: new Date() })
       .where(eq(users.id, user.id));
+    // Resetting a password ends every other session. The refresh tokens are the
+    // long-lived half of the pair, so revoking them is what actually shuts an
+    // attacker out; the access token they already hold ages out on its own.
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, user.id));
     await db
       .delete(passwordResetTokens)
       .where(eq(passwordResetTokens.userId, user.id));

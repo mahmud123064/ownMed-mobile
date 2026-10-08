@@ -14,14 +14,14 @@ There is no test runner wired up yet. Changes are verified against a running ser
 ## Layout
 
 - `src/index.ts` — process entry. Starts the HTTP server and handles `SIGINT`/`SIGTERM` (closes the server, then the pool).
-- `src/app.ts` — the Express app: middleware → routes → `notFound` → `errorHandler`. Import `app` from here rather than building a second one.
+- `src/app.ts` — the Express app: middleware → routes → `notFound` → `errorHandler`. Import `app` from here rather than building a second one. Also where CORS (`env.corsOrigins` in production, permissive otherwise), the `1mb` JSON body cap, and `trust proxy` are set.
 - `src/config/env.ts` — the **only** module that reads `process.env`. Exports a frozen `env`.
 - `src/db/pool.ts` — the shared `pg` `Pool`.
 - `src/db/schema.ts` — Drizzle table definitions + inferred types: the auth tables (`users`, `refreshTokens`, `passwordResetTokens`) and the domain tables (`healthProfiles`, `medicines`, `familyMembers`).
 - `src/db/index.ts` — the Drizzle client over `pool`; re-exports `schema` and its types.
 - `src/routes/*.ts` — one `Router` per resource, mounted in `app.ts`.
 - `src/middleware/` — `notFound`, `errorHandler`, `auth` (`authenticate`).
-- `src/utils/` — `ApiError`, `asyncHandler`, `validate` (zod), `password` (bcrypt), `tokens` (JWT + refresh + reset codes), `email` (Resend), `shareId` (Family ID generation + normalization).
+- `src/utils/` — `ApiError`, `asyncHandler`, `validate` (zod), `password` (bcrypt), `tokens` (JWT + refresh + reset codes), `email` (Resend), `shareId` (Family ID generation + normalization), `rateLimit` (the named limiters).
 - `src/types/express.d.ts` — augments Express `Request` with `req.user`.
 - `drizzle.config.ts` — drizzle-kit config; migrations live in `drizzle/`.
 
@@ -49,6 +49,8 @@ All config lives in `.env` (gitignored); `.env.example` documents every key. `sr
 | `REFRESH_TOKEN_EXPIRES_DAYS` | `30` | refresh-token lifetime |
 | `RESEND_API_KEY` | `""` | Resend API key; empty disables password-reset emails |
 | `RESEND_FROM` | `OwnMed <onboarding@resend.dev>` | verified sender address for reset emails |
+| `CORS_ORIGINS` | `""` | comma-separated allowlist of browser origins, used in `production` only. Empty denies cross-origin browser access; native requests send no `Origin` and are unaffected either way. |
+| `TRUST_PROXY` | `false` | set `true` behind a reverse proxy so rate limiting sees the real client IP instead of the proxy's. Off by default: trusting `X-Forwarded-For` unconditionally lets a client forge its own IP and slip every bucket. |
 
 ## Error handling
 
@@ -63,6 +65,12 @@ throw ApiError.notFound("Medicine not found");
 Wrap async handlers in `asyncHandler` so rejections reach the error middleware (Express 5 does this natively; the wrapper keeps it explicit).
 
 `middleware/errorHandler.ts` is the single place error responses are shaped: it uses `ApiError.statusCode`, logs only 5xx, and replaces the message with a generic `Internal server error` for non-`ApiError` throws so internals never leak. Stack traces appear only outside production. Register it last — after `notFound` — or it will not catch anything.
+
+## Rate limiting
+
+`src/utils/rateLimit.ts` builds the named limiters from one local `createLimiter` helper: `loginLimiter` (10 / 15 min), `changePasswordLimiter` (10 / 15 min, its own instance so a burst of password changes cannot spend the login budget), `registerLimiter` (5 / hour), `passwordResetRequestLimiter` (5 / 15 min), `passwordResetConfirmLimiter` (10 / 15 min) and `connectLimiter` (20 / 15 min, on `POST /family/connect` only). All of them set `skipSuccessfulRequests`, so only failures count against a bucket, and all return the same `{ error: { message, statusCode: 429 } }` shape `errorHandler` produces, so a throttled client sees one error format rather than two.
+
+The store is in-memory and therefore **per-process**: correct for a single instance, and silently under-counting behind a load balancer, where each replica keeps its own buckets. A shared store (Redis) is the fix if this ever runs on more than one process. Behind a reverse proxy the limiter would otherwise see the proxy's IP for every client — set `TRUST_PROXY=true` so it reads the real one.
 
 ## Database
 
@@ -103,8 +111,9 @@ Routes live under `/auth`:
 - `POST /auth/logout` — `{ refreshToken }` → revokes it, returns 204 (idempotent).
 - `GET /auth/me` — authenticated; returns the current user.
 - `PATCH /auth/me` — authenticated; accepts `{ name?, phone?, gender?, bloodGroup?, dateOfBirth? }` and returns `{ user }`. Email is deliberately **not** accepted: changing it is an identity change that needs re-verification, not a profile edit.
+- `POST /auth/change-password` — authenticated; `{ currentPassword, newPassword }` (min 6) → `{ message }`. Requires the current password even though the caller is already signed in: a session left open on a shared phone should not be enough to lock the owner out of their own account. On success it rehashes and **deletes every `refresh_tokens` row for the user**, so other sessions stop renewing.
 - `POST /auth/password-reset/request` — `{ email }` → emails a 6-digit code via Resend; always returns a generic 200 to avoid email enumeration.
-- `POST /auth/password-reset/confirm` — `{ email, code, newPassword }` → verifies the code, sets the new password.
+- `POST /auth/password-reset/confirm` — `{ email, code, newPassword }` → verifies the code, sets the new password, and revokes every refresh token. The code is capped at **5 wrong attempts** via `password_reset_tokens.attempts`: each mismatch increments the counter and the 5th deletes the row, forcing a fresh request. The lookup is by `userId`, not by code hash — counting failures requires finding the row, and `/request` already deletes any previous code, so there is exactly one. An unknown email therefore touches nothing and returns the same generic `Invalid or expired reset code`.
 
 `toPublicUser` is the single serializer for a user; it returns `id`, `name`, `email`, `phone`, `shareId`, `gender`, `bloodGroup`, `dateOfBirth`, with every nullable column flattened to `""` rather than `null` so the app's string-typed `UserProfile` needs no null handling.
 
@@ -113,8 +122,8 @@ Routes live under `/auth`:
 Token model (refresh rotation):
 
 - **Access token** — short-lived JWT (`JWT_SECRET`, default 15m), stateless; `authenticate` verifies signature + expiry only (no DB hit) and sets `req.user = { id, email }`.
-- **Refresh token** — opaque 48-byte random string, stored only as a sha256 hash in `refresh_tokens`; rotating deletes the old row and inserts a new one, so reuse after rotation fails.
-- Passwords are hashed with bcryptjs (12 rounds); emails are normalized (trim + lowercase) before storage/lookup.
+- **Refresh token** — opaque 48-byte random string, stored only as a sha256 hash in `refresh_tokens`. Rotation deletes the old row and inserts a new one, so reuse after rotation fails. The delete is `.delete(...).returning({ id })` and **zero rows back is the guard** — that means the token was already spent, so rotation is refused (`Refresh token already used`) rather than minting a second pair. Relying on the affected-row count rather than a preceding `SELECT` is what stops two concurrent refreshes with the same token from both succeeding.
+- Passwords are hashed with bcryptjs (12 rounds); emails are normalized (trim + lowercase) before storage/lookup. Reset-code comparison goes through `resetCodeMatches` (`timingSafeEqual` over the raw sha256 digests), not `===`, so a wrong guess cannot be narrowed by response timing.
 
 ## Sync (`/sync`)
 
@@ -139,7 +148,7 @@ Note `times` allows an **empty** array on purpose. The client's form requires at
 
 Dates go through `calendarDateSchema`, which checks the shape *and* that the day exists — the regex alone accepts `2026-02-30`, so the value is round-tripped through `Date` in UTC and must come back unchanged. The blank case is handled by `optionalCalendarDateSchema`, a union with `z.literal("")`: `.default("")` only covers an *absent* key, so an explicit `""` — which is exactly what the client sends for "no end date" — would otherwise fail the regex and take the whole payload down with it.
 
-The `frequency`/`time` columns it replaced were dropped in migrations `0005` and `0006`; because drizzle-kit cannot tell an added column from a rename without a TTY, the drop and the add were generated as two separate migrations rather than one interactive pass. `days` and `started_on` arrived in `0007`, and `ended_on` in `0008` — both plain column adds, so they generated non-interactively. `doctor_name`/`specialty` came in `0009`, `0010` added the Family ID and the Profile identity fields (see below), and `meal_timing` in `0011` — a plain nullable add, with no backfill, since a blank meal timing is the correct value for every row that predates it.
+The `frequency`/`time` columns it replaced were dropped in migrations `0005` and `0006`; because drizzle-kit cannot tell an added column from a rename without a TTY, the drop and the add were generated as two separate migrations rather than one interactive pass. `days` and `started_on` arrived in `0007`, and `ended_on` in `0008` — both plain column adds, so they generated non-interactively. `doctor_name`/`specialty` came in `0009`, `0010` added the Family ID and the Profile identity fields (see below), `meal_timing` in `0011` — a plain nullable add, with no backfill, since a blank meal timing is the correct value for every row that predates it — and `0012` added `password_reset_tokens.attempts`, a `NOT NULL DEFAULT 0` add backing the reset-code attempt cap.
 
 ### Shared with `/family`
 
@@ -162,7 +171,7 @@ Routes — **all unauthenticated, and that is the design, not an oversight**:
 - `GET /family/:shareId` — the linked account's `{ medicines, familyMembers }`.
 - `POST /family/:shareId` — same payload and same add-only `mergeDomain` as `/sync`, returning the merged snapshot.
 
-**The Family ID is a bearer credential.** The requirement is that a relative who has just installed the app — with no account of their own — can type in a code and start recording medicines for whoever shared it; requiring `authenticate` would defeat exactly that. So anyone who learns a code gets read and append access to that account's medicines and family members. Three things bound it: the merge is add-only (`onConflictDoNothing` — no update, no delete, so the worst case is spurious rows rather than lost or altered ones), an id already owned by a third account is skipped rather than reassigned, and the owner's `health_profiles` row is never in scope. A future "these routes are unauthenticated" finding is a product decision to raise, not a bug to patch — the agreed hardening path is invite/accept with signed tokens plus rate-limiting the `connect` lookup, never simply bolting `authenticate` on.
+**The Family ID is a bearer credential.** The requirement is that a relative who has just installed the app — with no account of their own — can type in a code and start recording medicines for whoever shared it; requiring `authenticate` would defeat exactly that. So anyone who learns a code gets read and append access to that account's medicines and family members. Three things bound it: the merge is add-only (`onConflictDoNothing` — no update, no delete, so the worst case is spurious rows rather than lost or altered ones), an id already owned by a third account is skipped rather than reassigned, and the owner's `health_profiles` row is never in scope. A future "these routes are unauthenticated" finding is a product decision to raise, not a bug to patch — `POST /connect` is rate-limited, which throttles guessing without changing the model, and the agreed hardening path beyond that is invite/accept with signed tokens, never simply bolting `authenticate` on.
 
 Migration `0010` adds the column as **nullable**, backfills existing rows with a `DO $$ ... $$` plpgsql loop, and only then creates the unique index. The nullable add is forced: `ADD COLUMN ... NOT NULL` with no default fails outright on a non-empty table, so the constraint arrives as a unique index instead. The hand-edited backfill sits between the two, giving each codeless row an 8-character code from the same misread-resistant alphabet the app generates from and re-rolling until the candidate matches no row already assigned — so the `CREATE INDEX` that follows cannot fail on a clash. The index would have tolerated repeated `NULL`s anyway; the backfill is there because an account with no code could never be shared, not because the index demands a value.
 
@@ -170,6 +179,6 @@ Migration `0010` adds the column as **nullable**, backfills existing rows with a
 
 Remaining work: per-resource CRUD (health profiles, medicines, prescriptions, family members) and file storage — the spec's Cloudflare R2 layer is not implemented, so prescription images never leave the device. There is also **no update or delete path** for a medicine, which is why `recoverFromLocal` on the client has to repair blank schedules locally: the server has no way to be told. Prescription *reading* is stubbed on the client (`src/lib/prescription.ts` throws) and has no server side at all.
 
-Token auto-refresh is still missing: the Expo app calls `/auth/register`, `/auth/login`, `/auth/password-reset/*`, `/auth/logout`, `/auth/me`, `PATCH /auth/me`, `/sync` and `/family/*`, but never `/auth/refresh`.
+The client renews its own tokens now: `src/lib/api.ts` retries an authenticated 401 once against `/auth/refresh`, single-flight so concurrent 401s share one rotation. What is still missing is a background re-sync — nothing retries a failed sync while the app is closed.
 
-On `/family`, the known follow-up is hardening rather than features: rate-limit the `connect` lookup and move to invite/accept with signed tokens. Until then the 8-character code is the whole credential.
+On `/family`, `POST /connect` is now rate-limited (see "Rate limiting"), so the remaining follow-up is hardening rather than features: invite/accept with signed tokens, which would replace the bearer-code model rather than throttle it. Until then the 8-character code is the whole credential.

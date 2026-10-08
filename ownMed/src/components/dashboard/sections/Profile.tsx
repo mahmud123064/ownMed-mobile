@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { router } from "expo-router";
 import { Controller, useForm } from "react-hook-form";
 import { Droplet, Eye, EyeOff, Lock, Mail, Phone, UserRound } from "lucide-react-native";
 import {
@@ -13,7 +14,7 @@ import {
 import DateField from "@/components/ui/DateField";
 import FormField from "@/components/ui/FormField";
 import { useAppData } from "@/context/AppDataContext";
-import { useAppTheme } from "@/theme";
+import { brand, useAppTheme } from "@/theme";
 
 import { GUEST_USER } from "../mock";
 
@@ -103,11 +104,12 @@ export default function Profile() {
 
 function ProfileForm({ user }: { user: UserProfile }) {
     const { colors } = useAppTheme();
-    const { authUser, updateProfile } = useAppData();
+    const { authUser, updateProfile, changePassword, signOut } = useAppData();
     const [showCurrent, setShowCurrent] = useState(false);
     const [showNext, setShowNext] = useState(false);
     const [showConfirm, setShowConfirm] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [changingPassword, setChangingPassword] = useState(false);
 
     const personal = useForm<PersonalInfo>({
         defaultValues: {
@@ -158,8 +160,57 @@ function ProfileForm({ user }: { user: UserProfile }) {
         }
     };
 
-    const onChangePassword = () => {
-        Alert.alert("Password", "Password changed (demo).");
+    const onChangePassword = async (data: PasswordForm) => {
+        if (!authUser) {
+            Alert.alert(
+                "Sign in to change your password",
+                "Your password belongs to your account, so you need to be signed in to change it.",
+            );
+            return;
+        }
+
+        setChangingPassword(true);
+        try {
+            await changePassword({
+                currentPassword: data.current,
+                newPassword: data.next,
+            });
+            // Clear the fields on success only. Leaving the typed passwords in
+            // three secure inputs that the user has already finished with is
+            // asking for them to be re-submitted by accident.
+            password.reset();
+            // Changing the password revokes every refresh token on the server,
+            // this session's included — so the session has already stopped being
+            // renewable and only the in-memory access token still works, until
+            // it expires and every button on this page starts failing. End it
+            // properly and send the user to sign in with the new password.
+            //
+            // Not cancelable: dismissing this would strand them here on a
+            // session that can no longer be renewed.
+            Alert.alert(
+                "Password updated",
+                "Please sign in again with your new password.",
+                [
+                    {
+                        text: "OK",
+                        onPress: () => {
+                            void signOut();
+                            router.replace("/sign-in");
+                        },
+                    },
+                ],
+                { cancelable: false },
+            );
+        } catch (error) {
+            Alert.alert(
+                "Couldn't change password",
+                error instanceof Error
+                    ? error.message
+                    : "Something went wrong. Please try again.",
+            );
+        } finally {
+            setChangingPassword(false);
+        }
     };
 
     return (
@@ -434,10 +485,16 @@ function ProfileForm({ user }: { user: UserProfile }) {
 
                     <Pressable
                         onPress={password.handleSubmit(onChangePassword)}
-                        className="items-center justify-center rounded-2xl border border-brand-600 py-3.5"
+                        disabled={changingPassword}
+                        className={`flex-row items-center justify-center gap-2 rounded-2xl border border-brand-600 py-3.5 ${
+                            changingPassword ? "opacity-70" : ""
+                        }`}
                     >
+                        {changingPassword ? (
+                            <ActivityIndicator color={brand[600]} size="small" />
+                        ) : null}
                         <Text className="text-base font-semibold text-brand-600">
-                            Update password
+                            {changingPassword ? "Updating…" : "Update password"}
                         </Text>
                     </Pressable>
                 </View>
