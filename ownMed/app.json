@@ -31,11 +31,18 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "...",
-          "cameraPermission": "..."
+          "photosPermission": "OwnMed needs access to your photos so you can attach a report or prescription image to your records.",
+          "cameraPermission": "OwnMed needs access to your camera so you can photograph a report or prescription to attach to your records."
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "color": "#00a08c",
+          "sounds": ["./assets/reminder.wav"]
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -7,6 +7,7 @@ import { notFound } from "./middleware/notFound.js";
 import { authRouter } from "./routes/auth.js";
 import { familyRouter } from "./routes/family.js";
 import { healthRouter } from "./routes/health.js";
+import { reportsRouter } from "./routes/reports.js";
 import { syncRouter } from "./routes/sync.js";
 
 export const app = express();
@@ -34,6 +35,7 @@ app.use("/auth", authRouter);
 app.use("/sync", syncRouter);
 // Unauthenticated by design: the share code is the credential (see routes/family.ts).
 app.use("/family", familyRouter);
+app.use("/reports", reportsRouter);
 
 // Order matters: unmatched routes become 404s, then every error is shaped by
 // the single error handler.

@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import type {
     FamilyMember,
+    LocalReport,
     Medicine,
     UserProfile,
 } from "@/components/dashboard/types";
@@ -29,11 +30,19 @@ const KEYS = {
     authTokens: "ownmed.authTokens",
     medicines: "ownmed.medicines",
     familyMembers: "ownmed.familyMembers",
+    // Reports a guest has added to this device. Unlike medicines these are not a
+    // cache of an account — a guest has none — so they are the *only* copy until
+    // sign-in uploads them (see `flushPendingReports` in AppDataContext).
+    localReports: "ownmed.localReports",
     // The family member whose data this device is currently managing, set by
     // entering their Family ID. Persisted so the link survives a restart.
     familyLink: "ownmed.familyLink",
     // Set when a post-auth sync fails, so the next sign-in knows to push again.
     syncPending: "ownmed.syncPending",
+    // Whether medicine reminders may be scheduled at all. A device preference
+    // rather than an account one: it governs what *this phone* rings for, and a
+    // second device signed into the same account keeps its own answer.
+    notificationsEnabled: "ownmed.notificationsEnabled",
 } as const;
 
 // TODO(security): move tokens to expo-secure-store. AsyncStorage is unencrypted
@@ -55,6 +64,23 @@ export async function loadOnboarded(): Promise<boolean> {
 
 export async function saveOnboarded(value: boolean): Promise<void> {
     await AsyncStorage.setItem(KEYS.onboarded, String(value));
+}
+
+/**
+ * Whether the user wants medicine reminders, defaulting to **on**.
+ *
+ * The default is a deliberate choice: a user who adds a medicine has asked to be
+ * reminded of it, so reminders are what they expect unless they say otherwise.
+ * Only an explicit "false" turns them off, which also means a device that never
+ * wrote this key — every install up to now — keeps behaving as it did.
+ */
+export async function loadNotificationsEnabled(): Promise<boolean> {
+    const value = await AsyncStorage.getItem(KEYS.notificationsEnabled);
+    return value !== "false";
+}
+
+export async function saveNotificationsEnabled(value: boolean): Promise<void> {
+    await AsyncStorage.setItem(KEYS.notificationsEnabled, String(value));
 }
 
 export async function loadHealthProfile(): Promise<HealthProfile | null> {
@@ -215,15 +241,150 @@ export async function saveMedicines(medicines: Medicine[]): Promise<void> {
     await AsyncStorage.setItem(KEYS.medicines, JSON.stringify(medicines));
 }
 
+/**
+ * Coerce a stored record into the current `FamilyMember` shape.
+ *
+ * Mirrors `normalizeMedicine`: AsyncStorage holds whatever an older build wrote,
+ * and there is no schema version to key off. Returns null for a record with no
+ * usable id, which the caller filters out.
+ *
+ * `status` is clamped to the two known values for the same reason the server
+ * clamps `mealTiming` on the way out — anything else would render as a state the
+ * UI has no styling for, since the row's dot is a two-way branch on it.
+ *
+ * Exported so the storage boundary is testable without AsyncStorage.
+ */
+export function normalizeFamilyMember(raw: unknown): FamilyMember | null {
+    if (typeof raw !== "object" || raw === null) return null;
+    const record = raw as Record<string, unknown>;
+    if (typeof record.id !== "string" || record.id === "") return null;
+
+    return {
+        id: record.id,
+        name: typeof record.name === "string" ? record.name : "",
+        relation: typeof record.relation === "string" ? record.relation : "",
+        // The server sends `age: 0` for a NULL column, so a missing or
+        // non-numeric age reads the same way rather than as "undefined yrs".
+        age:
+            typeof record.age === "number" && Number.isFinite(record.age)
+                ? record.age
+                : 0,
+        healthStatus:
+            typeof record.healthStatus === "string" ? record.healthStatus : "",
+        status: record.status === "attention" ? "attention" : "stable",
+    };
+}
+
 export async function loadFamilyMembers(): Promise<FamilyMember[]> {
     const raw = await AsyncStorage.getItem(KEYS.familyMembers);
-    return raw ? (JSON.parse(raw) as FamilyMember[]) : [];
+    if (!raw) return [];
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        // Per-record tolerance: one corrupt entry must not discard the rest.
+        return parsed
+            .map(normalizeFamilyMember)
+            .filter((member): member is FamilyMember => member !== null);
+    } catch {
+        return [];
+    }
 }
 
 export async function saveFamilyMembers(
     members: FamilyMember[],
 ): Promise<void> {
     await AsyncStorage.setItem(KEYS.familyMembers, JSON.stringify(members));
+}
+
+/** The categories a stored report may carry; see `normalizeLocalReport`. */
+const REPORT_CATEGORY_VALUES = [
+    "lab",
+    "prescription",
+    "xray",
+    "other",
+] as const;
+
+/**
+ * Coerce a stored record into the current `LocalReport` shape.
+ *
+ * Mirrors `normalizeMedicine`: AsyncStorage holds whatever an older build wrote.
+ * Returns null for a record with no id **or no file uri** — a report whose bytes
+ * cannot be located is not a report, and the list renders an open button for
+ * every row, so one without a uri would fail only when the user tapped it.
+ *
+ * `category` is clamped to the four known values for the same reason
+ * `mealTiming` is: the list picks its icon from `CATEGORY_ICONS[category]`, so a
+ * value that survived from an older build would index nothing and render
+ * undefined.
+ *
+ * Exported so the storage boundary is testable without AsyncStorage.
+ */
+export function normalizeLocalReport(raw: unknown): LocalReport | null {
+    if (typeof raw !== "object" || raw === null) return null;
+    const record = raw as Record<string, unknown>;
+    if (typeof record.id !== "string" || record.id === "") return null;
+
+    const file = record.file;
+    if (typeof file !== "object" || file === null) return null;
+    const fileRecord = file as Record<string, unknown>;
+    if (typeof fileRecord.uri !== "string" || fileRecord.uri === "") {
+        return null;
+    }
+
+    const category = REPORT_CATEGORY_VALUES.find((c) => c === record.category);
+
+    return {
+        id: record.id,
+        title: typeof record.title === "string" ? record.title : "",
+        category: category ?? "other",
+        takenOn: typeof record.takenOn === "string" ? record.takenOn : "",
+        file: {
+            uri: fileRecord.uri,
+            // Absent on records written before previews existed, and "" on a PDF
+            // — both read as "no preview", so there is nothing to salvage here.
+            thumbnailUri:
+                typeof fileRecord.thumbnailUri === "string"
+                    ? fileRecord.thumbnailUri
+                    : "",
+            fileName:
+                typeof fileRecord.fileName === "string"
+                    ? fileRecord.fileName
+                    : "",
+            mimeType:
+                typeof fileRecord.mimeType === "string"
+                    ? fileRecord.mimeType
+                    : "",
+            // The server accepts 0 as "the device could not determine it", and
+            // `formatFileSize` renders it as "Unknown size", so 0 is the honest
+            // fallback rather than a guess.
+            sizeBytes:
+                typeof fileRecord.sizeBytes === "number" &&
+                Number.isFinite(fileRecord.sizeBytes)
+                    ? fileRecord.sizeBytes
+                    : 0,
+        },
+    };
+}
+
+export async function loadLocalReports(): Promise<LocalReport[]> {
+    const raw = await AsyncStorage.getItem(KEYS.localReports);
+    if (!raw) return [];
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        // Per-record tolerance: one corrupt entry must not discard the rest.
+        return parsed
+            .map(normalizeLocalReport)
+            .filter((report): report is LocalReport => report !== null);
+    } catch {
+        return [];
+    }
+}
+
+export async function saveLocalReports(
+    reports: LocalReport[],
+): Promise<void> {
+    await AsyncStorage.setItem(KEYS.localReports, JSON.stringify(reports));
 }
 
 /**

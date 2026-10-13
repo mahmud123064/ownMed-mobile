@@ -9,7 +9,7 @@ npm start          # node dist/index.js (run `npm run build` first)
 npm run typecheck  # tsc --noEmit
 ```
 
-There is no test runner wired up yet. Changes are verified against a running server instead: start `npm run dev` and drive the real routes with `fetch` from a throwaway `.mjs` script in a temp directory — register a throwaway account, push through `/sync`, and assert on the response. This is worth doing for any schema or validation change, because the API's failure mode is quiet: the sync payload validates as a whole, so one malformed row 400s an entire push rather than that one row. Beware that this writes rows owned by the throwaway account into whatever database `DATABASE_URL` points at, and there is no delete path.
+There is no test runner wired up yet. Changes are verified against a running server instead: start `npm run dev` and drive the real routes with `fetch` from a throwaway `.mjs` script in a temp directory — register a throwaway account, push through `/sync`, and assert on the response. This is worth doing for any schema or validation change, because the API's failure mode is quiet: the sync payload validates as a whole, so one malformed row 400s an entire push rather than that one row. Beware that this writes rows owned by the throwaway account into whatever database `DATABASE_URL` points at, and medicines and family members have no delete path to clean them up with (reports do — `DELETE /reports/:id`).
 
 ## Layout
 
@@ -17,11 +17,11 @@ There is no test runner wired up yet. Changes are verified against a running ser
 - `src/app.ts` — the Express app: middleware → routes → `notFound` → `errorHandler`. Import `app` from here rather than building a second one. Also where CORS (`env.corsOrigins` in production, permissive otherwise), the `1mb` JSON body cap, and `trust proxy` are set.
 - `src/config/env.ts` — the **only** module that reads `process.env`. Exports a frozen `env`.
 - `src/db/pool.ts` — the shared `pg` `Pool`.
-- `src/db/schema.ts` — Drizzle table definitions + inferred types: the auth tables (`users`, `refreshTokens`, `passwordResetTokens`) and the domain tables (`healthProfiles`, `medicines`, `familyMembers`).
+- `src/db/schema.ts` — Drizzle table definitions + inferred types: the auth tables (`users`, `refreshTokens`, `passwordResetTokens`), the domain tables (`healthProfiles`, `medicines`, `familyMembers`) and `reports` (metadata for files held in R2).
 - `src/db/index.ts` — the Drizzle client over `pool`; re-exports `schema` and its types.
 - `src/routes/*.ts` — one `Router` per resource, mounted in `app.ts`.
 - `src/middleware/` — `notFound`, `errorHandler`, `auth` (`authenticate`).
-- `src/utils/` — `ApiError`, `asyncHandler`, `validate` (zod), `password` (bcrypt), `tokens` (JWT + refresh + reset codes), `email` (Resend), `shareId` (Family ID generation + normalization), `rateLimit` (the named limiters).
+- `src/utils/` — `ApiError`, `asyncHandler`, `validate` (zod), `password` (bcrypt), `tokens` (JWT + refresh + reset codes), `email` (Resend), `r2` (presigned upload/download URLs for reports), `shareId` (Family ID generation + normalization), `rateLimit` (the named limiters).
 - `src/types/express.d.ts` — augments Express `Request` with `req.user`.
 - `drizzle.config.ts` — drizzle-kit config; migrations live in `drizzle/`.
 
@@ -49,8 +49,15 @@ All config lives in `.env` (gitignored); `.env.example` documents every key. `sr
 | `REFRESH_TOKEN_EXPIRES_DAYS` | `30` | refresh-token lifetime |
 | `RESEND_API_KEY` | `""` | Resend API key; empty disables password-reset emails |
 | `RESEND_FROM` | `OwnMed <onboarding@resend.dev>` | verified sender address for reset emails |
+| `R2_ENDPOINT` | `""` | R2 S3 API endpoint, `https://<account-id>.r2.cloudflarestorage.com` |
+| `R2_ACCESS_KEY_ID` | `""` | R2 API token with Object Read & Write on the bucket |
+| `R2_SECRET_ACCESS_KEY` | `""` | |
+| `R2_BUCKET` | `""` | |
+| `R2_PUBLIC_URL` | `""` | optional custom domain / CDN in front of the bucket. Set, downloads are plain URLs; empty, the bucket stays private and downloads are presigned. |
 | `CORS_ORIGINS` | `""` | comma-separated allowlist of browser origins, used in `production` only. Empty denies cross-origin browser access; native requests send no `Origin` and are unaffected either way. |
 | `TRUST_PROXY` | `false` | set `true` behind a reverse proxy so rate limiting sees the real client IP instead of the proxy's. Off by default: trusting `X-Forwarded-For` unconditionally lets a client forge its own IP and slip every bucket. |
+
+`RESEND_*` and `R2_*` are the two **optional groups**: the server boots without either, and only the routes that need them fail, with a clean 503 rather than a crash. `env.r2Configured` is the derived boolean — true only when all four of the first `R2_*` keys are non-empty, so a half-filled config is treated as none rather than booting an S3 client that fails on first upload. Both are built lazily for the same reason (`utils/email.ts`, `utils/r2.ts`): constructing `new Resend("")` or an S3 client with empty credentials throws at module load, which would take the whole process down before the key was ever read.
 
 ## Error handling
 
@@ -148,7 +155,7 @@ Note `times` allows an **empty** array on purpose. The client's form requires at
 
 Dates go through `calendarDateSchema`, which checks the shape *and* that the day exists — the regex alone accepts `2026-02-30`, so the value is round-tripped through `Date` in UTC and must come back unchanged. The blank case is handled by `optionalCalendarDateSchema`, a union with `z.literal("")`: `.default("")` only covers an *absent* key, so an explicit `""` — which is exactly what the client sends for "no end date" — would otherwise fail the regex and take the whole payload down with it.
 
-The `frequency`/`time` columns it replaced were dropped in migrations `0005` and `0006`; because drizzle-kit cannot tell an added column from a rename without a TTY, the drop and the add were generated as two separate migrations rather than one interactive pass. `days` and `started_on` arrived in `0007`, and `ended_on` in `0008` — both plain column adds, so they generated non-interactively. `doctor_name`/`specialty` came in `0009`, `0010` added the Family ID and the Profile identity fields (see below), `meal_timing` in `0011` — a plain nullable add, with no backfill, since a blank meal timing is the correct value for every row that predates it — and `0012` added `password_reset_tokens.attempts`, a `NOT NULL DEFAULT 0` add backing the reset-code attempt cap.
+The `frequency`/`time` columns it replaced were dropped in migrations `0005` and `0006`; because drizzle-kit cannot tell an added column from a rename without a TTY, the drop and the add were generated as two separate migrations rather than one interactive pass. `days` and `started_on` arrived in `0007`, and `ended_on` in `0008` — both plain column adds, so they generated non-interactively. `doctor_name`/`specialty` came in `0009`, `0010` added the Family ID and the Profile identity fields (see below), `meal_timing` in `0011` — a plain nullable add, with no backfill, since a blank meal timing is the correct value for every row that predates it — and `0012` added `password_reset_tokens.attempts`, a `NOT NULL DEFAULT 0` add backing the reset-code attempt cap. `0013` created the `reports` table (see "Reports").
 
 ### Shared with `/family`
 
@@ -159,7 +166,7 @@ The `frequency`/`time` columns it replaced were dropped in migrations `0005` and
 - `mergeDomain(userId, input)` — the add-only insert pass, plus the `startedOn`/`endedOn`/`doctorName`/`specialty`/`mealTiming` blank-to-`null` and `age ?? null` mappings.
 - `medicineSchema`, `familyMemberSchema`, `calendarDateSchema`, `optionalCalendarDateSchema` — the validators behind the above.
 
-There are no per-resource CRUD routes and **no delete path** — a record removed on the device will reappear from the server on the next sync. Adding deletes means adding tombstones or a real `DELETE` route, not just filtering the client array.
+There are no per-resource CRUD routes and **no delete path for medicines or family members** — a record removed on the device will reappear from the server on the next sync. Adding deletes there means adding tombstones or a real `DELETE` route, not just filtering the client array. `/reports` is the deliberate exception: it is its own resource with its own `DELETE`, added because a document uploaded by mistake has to be removable in a way an append-only log of doses never needed to be.
 
 ## Family ID (`/family`)
 
@@ -175,9 +182,48 @@ Routes — **all unauthenticated, and that is the design, not an oversight**:
 
 Migration `0010` adds the column as **nullable**, backfills existing rows with a `DO $$ ... $$` plpgsql loop, and only then creates the unique index. The nullable add is forced: `ADD COLUMN ... NOT NULL` with no default fails outright on a non-empty table, so the constraint arrives as a unique index instead. The hand-edited backfill sits between the two, giving each codeless row an 8-character code from the same misread-resistant alphabet the app generates from and re-rolling until the candidate matches no row already assigned — so the `CREATE INDEX` that follows cannot fail on a clash. The index would have tolerated repeated `NULL`s anyway; the backfill is there because an account with no code could never be shared, not because the index demands a value.
 
+## Reports (`/reports`)
+
+Uploaded medical documents — lab results, scans, prescriptions. This is the one resource whose **bytes do not live in Postgres**: the file is in the R2 bucket and the `reports` row is the metadata that makes it findable. That single fact shapes everything below.
+
+**The file never passes through this server.** Node never buffers an upload, and the size of a report is bounded by storage rather than by the API's body cap:
+
+1. `POST /reports/upload-url` — `{ id, fileName, mimeType, sizeBytes }` → `{ storageKey, uploadUrl, thumbnailKey, thumbnailUploadUrl }`. Validates the type, builds the key from `req.user!.id` and a presigned PUT (5 min), and — for an image — signs a second key for its preview.
+2. The device PUTs the bytes **straight to storage** at `uploadUrl`, and its preview at `thumbnailUploadUrl`.
+3. `POST /reports` — `{ id, title, category, takenOn, file }` → `{ report }`, recording that the object exists. `file` carries `thumbnailKey` alongside `storageKey`.
+
+The id comes from the client at step 1, which is why the object key and the row share it: the key is `reports/<userId>/<reportId>-<name>`, so retrying a failed upload overwrites the same object instead of orphaning the first attempt, and replaying the create hits `onConflictDoNothing` and returns the existing row rather than 500-ing.
+
+**The preview is generated by the device, and this server never looks at the pixels.** That is the same division of labour as the upload itself: Node has no image pipeline and should not grow one, and the device is the only place that can tell a lab report (which has to stay legible) from a photo of a receipt. So the API's whole involvement is to sign a key for it, record it, and sign it back on the way out. Two consequences worth keeping:
+
+- **A preview is only signed for an image.** A PDF has no pixels to preview, so `thumbnailKey` comes back as `""` rather than as a URL nobody can use — a second signed PUT for a file that will never exist would only be a second way for an upload to half-fail.
+- **`thumbnailKey` is optional on the way in** (`.optional().default("")`). A client that predates previews, or one whose preview generation failed on the device, still creates its report: a missing preview is a cosmetic loss and not a reason to refuse a document the user has already uploaded. `""` is stored as NULL, and `toReport` flattens it back to `""` — one shape either way, so the client never branches on null.
+
+The thumbnail key is client-supplied in exactly the same way the file key is, and is therefore checked the same way — see below.
+
+**Step 3 is where a client could try to attach someone else's object to its own row**, so it refuses any `storageKey` that does not start with `reports/<its own userId>/`. The preview key is checked by the same rule, because `thumbnailStorageKey` deliberately puts it under the same prefix — one prefix check covers both, where a second, parallel rule is a second place for the two to drift apart. That prefix check is the whole authorization for the object — storage itself has no idea who is calling.
+
+The rest of the surface:
+
+- `GET /reports` — the account's reports, newest first by `createdAt` (not `takenOn`, which is optional and would have to sort somewhere arbitrary). Returns **no** download URL: one embedded here would be stale by the time it was used.
+- `GET /reports/:id/download-url` — a fresh presigned GET (10 min), or `R2_PUBLIC_URL/key` when a public domain is configured, plus `thumbnailUrl` signed in the same response (`""` when there is no preview). Signed on demand, which is what keeps it valid long enough to actually load the file; the preview is signed alongside because it is wanted at the same moment, by the same caller, for the same screen.
+- `GET /reports/thumbnail-urls` — `{ urls: { [reportId]: url } }` for every report in the account that has a preview, in one request rather than one per row, since a list renders them all at once and a signed URL costs a signature each. A separate endpoint rather than a field on the list **because these URLs expire**: embedding them in `GET /reports` would take the list stale with them, and kept apart the list stays a record of what exists while a slow or failed preview never holds it up. Where storage is not configured it answers `{ urls: {} }` rather than 503 — the list is perfectly usable with its category icons, and an error there would put a failure on a screen that has nothing wrong with it.
+- `DELETE /reports/:id` — 204. The row goes first and the objects after, best-effort: the row is what makes them reachable, so a failed storage delete leaves nothing the user can see, whereas the reverse would leave a row pointing at a missing object and render as a broken image. The preview goes with the file, and only when the row has one — a row written before that column existed has none.
+
+Every route requires `authenticate`. Reports are **not** part of `/sync` (a file is not a value the device can hold and merge) and are **not** exposed by `/family/:shareId` — managing a relative's medicines is a different act from reading their lab results. Reports are per-account and deliberately not shared.
+
+Two validation details worth keeping:
+
+- **`mimeType` is an allowlist** (`image/jpeg|png|heic|webp`, `application/pdf`), not a pattern. It is signed into the upload URL and stored on the row, and the client decides how to open the file from it, so an open-ended check would let a client store a content type neither side knows how to render.
+- **`sizeBytes` allows `0`, meaning "the device could not determine it."** Android's photo picker sometimes reports no size, and a `.positive()` there would reject a perfectly good upload over metadata the user cannot influence. The 25 MB cap still applies to every size that *was* reported, so this admits an unknown size, not an oversized one.
+
+`category` is plain `text` with a `z.enum(["lab","prescription","xray","other"])` on the way in and a clamp to `"other"` in `toReport` on the way out — the same shape as `mealTiming`, for the same reason: a text column with no constraint would let a bad value reach the client and be echoed straight back into a rejected payload. Acting on that decision means changing the validator and the client's `REPORT_CATEGORIES`, never a migration.
+
+`utils/r2.ts` is the S3 client (`@aws-sdk/client-s3` + `s3-request-presigner`), pointed at `R2_ENDPOINT` with region `"auto"`. It owns every key this API hands out: `storageKey`, which sanitizes the device file name down to `[A-Za-z0-9._-]` before it goes into the key — object keys are a flat namespace, so a name containing `/` or `..` would silently nest or traverse — plus `thumbnailStorageKey` and `storagePrefix`, the `reports/<userId>/` prefix that both keys are checked against. The preview is `reports/<userId>/thumbs/<id>.jpg`: a `thumbs/` **segment** rather than a suffix on the file's own key, because that key ends with a name the *client* chose, so a report picked from a file literally called "thumb.jpg" would otherwise reserve exactly the same key as its own preview and the second upload would land on top of the first. Since sanitizing strips every `/`, a file's key is always one segment after the user id and a preview's always two, so the two cannot meet — and the preview needs no sanitizing of its own, being a JPEG this app produced. The display name survives untouched in the `fileName` column, so nothing user-visible depends on that sanitizing being lossless.
+
 ## Not built yet
 
-Remaining work: per-resource CRUD (health profiles, medicines, prescriptions, family members) and file storage — the spec's Cloudflare R2 layer is not implemented, so prescription images never leave the device. There is also **no update or delete path** for a medicine, which is why `recoverFromLocal` on the client has to repair blank schedules locally: the server has no way to be told. Prescription *reading* is stubbed on the client (`src/lib/prescription.ts` throws) and has no server side at all.
+Remaining work: per-resource CRUD (health profiles, medicines, family members) and an **update** path — there is still no way to modify a medicine once it exists, which is why `recoverFromLocal` on the client has to repair blank schedules locally: the server has no way to be told. Deletes exist only for `reports` (see above); medicines and family members remain append-only. Prescription *reading* is stubbed on the client (`src/lib/prescription.ts` throws) and has no server side at all. Report storage is no longer unexercised: with real `R2_*` credentials in place it has been driven from the app end-to-end, so the S3 client, the presigns and the `storageKey` prefix check are known-good rather than merely written. A deployment without those keys is still a valid state — the routes answer 503 and nothing else is affected — which is where a fresh clone starts.
 
 The client renews its own tokens now: `src/lib/api.ts` retries an authenticated 401 once against `/auth/refresh`, single-flight so concurrent 401s share one rotation. What is still missing is a background re-sync — nothing retries a failed sync while the app is closed.
 

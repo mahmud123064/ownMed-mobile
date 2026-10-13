@@ -17,12 +17,17 @@ import {
 } from "react-native";
 
 import { parsePrescription } from "@/lib/prescription";
+import { optimizeImage, type OptimizedImage } from "@/lib/imageOptimization";
+import { pickedFileFromAsset } from "@/lib/reports";
 import { status, useAppTheme, brand } from "@/theme";
 
 type Props = {
     /** Leave the uploader and add the medicine by hand instead. */
     onAddManually: () => void;
 };
+
+/** The most images one prescription may be read from. */
+const MAX_IMAGES = 5;
 
 /**
  * The prescription route to adding a medicine — one of the two modes of Add
@@ -32,12 +37,21 @@ type Props = {
  */
 export default function UploadPrescription({ onAddManually }: Props) {
     const { colors } = useAppTheme();
-    const [images, setImages] = useState<string[]>([]);
+    /**
+     * The picked images, already resized, compressed and previewed.
+     *
+     * Held as `OptimizedImage` rather than as the picker's URIs so the grid can
+     * draw the preview instead of decoding a full-size photo five times over —
+     * which is the difference between a grid that scrolls and one that stutters
+     * on a mid-range Android.
+     */
+    const [images, setImages] = useState<OptimizedImage[]>([]);
     const [reading, setReading] = useState(false);
 
     const pick = async () => {
         try {
-            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            const perm =
+                await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (!perm.granted) {
                 Alert.alert(
                     "Permission needed",
@@ -48,12 +62,43 @@ export default function UploadPrescription({ onAddManually }: Props) {
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ["images"],
                 allowsMultipleSelection: true,
-                selectionLimit: 5,
-                quality: 0.8,
+                selectionLimit: MAX_IMAGES,
+                // Uncompressed, like the reports picker: `optimizeImage` is what
+                // decides the encoding, and a picker that has already discarded
+                // quality leaves it nothing to work with.
+                quality: 1,
+                // An iPhone's camera roll is HEIC by default, and a prescription
+                // read on another device — an Android, which will not decode
+                // HEIC — has to be a format that device can open. iOS-only.
+                preferredAssetRepresentationMode:
+                    ImagePicker.UIImagePickerPreferredAssetRepresentationMode
+                        .Compatible,
             });
-            if (!result.canceled) {
-                setImages((prev) =>
-                    [...prev, ...result.assets.map((a) => a.uri)].slice(0, 5),
+            if (result.canceled) return;
+
+            const prepared: OptimizedImage[] = [];
+            let skipped = 0;
+            for (const asset of result.assets) {
+                try {
+                    prepared.push(
+                        await optimizeImage(pickedFileFromAsset(asset)),
+                    );
+                } catch {
+                    // One unreadable file must not lose the other four, so it is
+                    // counted and reported rather than thrown.
+                    skipped += 1;
+                }
+            }
+
+            if (prepared.length > 0) {
+                setImages((prev) => [...prev, ...prepared].slice(0, MAX_IMAGES));
+            }
+            if (skipped > 0) {
+                Alert.alert(
+                    "Some images could not be added",
+                    skipped === 1
+                        ? "One of the images could not be prepared on this device. Try picking it again."
+                        : `${skipped} of the images could not be prepared on this device. Try picking them again.`,
                 );
             }
         } catch {
@@ -74,7 +119,7 @@ export default function UploadPrescription({ onAddManually }: Props) {
         }
         setReading(true);
         try {
-            await parsePrescription(images);
+            await parsePrescription(images.map((image) => image.uri));
             // Unreachable until the parser is implemented. Drafts must be shown
             // for review and confirmation before anything is saved.
             onAddManually();
@@ -90,7 +135,7 @@ export default function UploadPrescription({ onAddManually }: Props) {
     };
 
     const remove = (uri: string) =>
-        setImages((prev) => prev.filter((u) => u !== uri));
+        setImages((prev) => prev.filter((image) => image.uri !== uri));
 
     return (
         <View className="mt-5">
@@ -120,14 +165,20 @@ export default function UploadPrescription({ onAddManually }: Props) {
 
             {images.length > 0 && (
                 <View className="mt-5 flex-row flex-wrap gap-3">
-                    {images.map((uri) => (
-                        <View key={uri} className="relative h-24 w-24">
+                    {images.map((image) => (
+                        <View key={image.uri} className="relative h-24 w-24">
+                            {/* The preview, not the image. Drawing the full-size
+                                file here would decode five multi-megapixel
+                                bitmaps to fill five 96 px squares. */}
                             <Image
-                                source={{ uri }}
+                                source={{
+                                    uri: image.thumbnail?.uri ?? image.uri,
+                                }}
                                 className="h-full w-full rounded-2xl border border-border"
+                                resizeMode="cover"
                             />
                             <Pressable
-                                onPress={() => remove(uri)}
+                                onPress={() => remove(image.uri)}
                                 hitSlop={6}
                                 className="absolute -right-2 -top-2 h-6 w-6 items-center justify-center rounded-full bg-danger"
                             >

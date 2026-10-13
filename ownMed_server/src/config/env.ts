@@ -21,6 +21,15 @@ function required(name: string): string {
 
 const nodeEnv = process.env.NODE_ENV ?? "development";
 
+// Report storage (Cloudflare R2). Optional at boot, like Resend — the server
+// has plenty to do without them, and the report routes report a clean 503 until
+// all four are set. Read out here rather than inline so `r2Configured` can be
+// derived from them without reaching back into the frozen object.
+const r2Endpoint = process.env.R2_ENDPOINT ?? "";
+const r2AccessKeyId = process.env.R2_ACCESS_KEY_ID ?? "";
+const r2SecretAccessKey = process.env.R2_SECRET_ACCESS_KEY ?? "";
+const r2Bucket = process.env.R2_BUCKET ?? "";
+
 export const env = Object.freeze({
   nodeEnv,
   isProduction: nodeEnv === "production",
@@ -36,6 +45,25 @@ export const env = Object.freeze({
   // password-reset routes return a clear error until these are set.
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   resendFrom: process.env.RESEND_FROM ?? "OwnMed <onboarding@resend.dev>",
+  // Report storage (Cloudflare R2) — holds uploaded lab reports, scans and
+  // prescriptions. Optional at boot; the report routes return a clear 503 until
+  // these are set, exactly as the password-reset routes do without Resend.
+  r2Endpoint,
+  r2AccessKeyId,
+  r2SecretAccessKey,
+  r2Bucket,
+  // Optional. When set, the bucket is served through a public domain (or a
+  // Cloudflare CDN in front of it) and downloads are plain URLs instead of
+  // presigned ones. Left empty for the private-bucket setup the upload flow
+  // assumes, where every download URL is signed and short-lived.
+  r2PublicUrl: process.env.R2_PUBLIC_URL ?? "",
+  // Everything the S3 client needs. A partial configuration is treated as no
+  // configuration rather than booting a client that fails on first upload.
+  r2Configured:
+    r2Endpoint !== "" &&
+    r2AccessKeyId !== "" &&
+    r2SecretAccessKey !== "" &&
+    r2Bucket !== "",
   // Browser origins allowed to call the API, comma-separated. The mobile app
   // sends no `Origin` and is never subject to CORS, so an empty list costs it
   // nothing; in production an empty list is a deny for web clients.

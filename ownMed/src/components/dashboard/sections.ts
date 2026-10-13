@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import {
+    FileText,
     History,
     LayoutDashboard,
     Pill,
@@ -14,6 +15,7 @@ import FamilyMembers from "./sections/FamilyMembers";
 import MedicineHistory from "./sections/MedicineHistory";
 import Overview from "./sections/Overview";
 import Profile from "./sections/Profile";
+import Reports from "./sections/Reports";
 
 // Find Doctor, Find Pharmacy, Find Hospital, and Appointments are intentionally
 // not published in this release. Their components and mock data stay in the
@@ -27,6 +29,7 @@ export const SECTIONS: Section[] = [
     { id: "add-medicine", label: "Add Medicine", icon: Pill },
     { id: "medicine-history", label: "Medicine History", icon: History },
     { id: "family", label: "Family Member Status", icon: Users },
+    { id: "reports", label: "Reports", icon: FileText },
 ];
 
 export const SECTION_COMPONENTS: Record<SectionId, ComponentType> = {
@@ -35,4 +38,5 @@ export const SECTION_COMPONENTS: Record<SectionId, ComponentType> = {
     "add-medicine": AddMedicine,
     "medicine-history": MedicineHistory,
     family: FamilyMembers,
+    reports: Reports,
 };

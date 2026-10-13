@@ -201,6 +201,63 @@ export const familyMembers = pgTable(
   (table) => [index("family_members_user_id_idx").on(table.userId)],
 );
 
+/**
+ * Uploaded medical documents — lab reports, scans, prescriptions.
+ *
+ * The only table whose data lives outside Postgres: the bytes sit in the R2
+ * bucket under `storageKey`, and this row is the metadata that makes them
+ * findable. That split is why the id is client-generated like the domain
+ * tables: the device reserves the key (and so the object path) before the
+ * upload starts, so a retried upload overwrites the same object rather than
+ * orphaning the first attempt.
+ *
+ * Unlike medicines and family members this is **not** part of `/sync`, and it
+ * is not shared by Family ID — reports belong to the account that uploaded
+ * them, and the routes in `routes/reports.ts` read and write them one at a
+ * time rather than as an add-only merge.
+ */
+export const reports = pgTable(
+  "reports",
+  {
+    id: uuid("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    // "lab" | "prescription" | "xray" | "other". A plain text column rather
+    // than an enum type, so adding a category later is a code change and not a
+    // migration; the routes clamp anything else to "other" on the way out.
+    category: text("category").notNull(),
+    // "YYYY-MM-DD" — the day the report is *about* (when the sample was taken),
+    // which is not the day it was uploaded, so it is not `createdAt`. Nullable
+    // because the date is optional on the form and `""` has no place in a date
+    // column; the routes flatten NULL back to `""`.
+    takenOn: text("taken_on"),
+    // The name the file had on the device, shown in the list. Purely a label —
+    // the object's real name in the bucket is derived from `id`.
+    fileName: text("file_name"),
+    // The object's key in the bucket, `reports/<userId>/<id>-<name>`. The
+    // leading user segment is what `routes/reports.ts` checks before trusting a
+    // key sent up by the client.
+    storageKey: text("storage_key").notNull(),
+    // A second object holding a small preview of the same report, generated on
+    // the device and uploaded alongside the file. Nullable because a PDF has no
+    // preview to make, and because rows written before this column existed have
+    // none — the list falls back to the category icon for those. It sits under
+    // the same `reports/<userId>/` prefix as `storageKey`, and is authorized the
+    // same way.
+    thumbnailKey: text("thumbnail_key"),
+    mimeType: text("mime_type").notNull(),
+    // Bytes, for the size shown in the list. `integer` is generous here — a
+    // 2 GB report is not a thing this app accepts.
+    sizeBytes: integer("size_bytes").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("reports_user_id_idx").on(table.userId)],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type RefreshToken = typeof refreshTokens.$inferSelect;
@@ -208,3 +265,5 @@ export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 export type HealthProfile = typeof healthProfiles.$inferSelect;
 export type Medicine = typeof medicines.$inferSelect;
 export type FamilyMember = typeof familyMembers.$inferSelect;
+export type Report = typeof reports.$inferSelect;
+export type NewReport = typeof reports.$inferInsert;

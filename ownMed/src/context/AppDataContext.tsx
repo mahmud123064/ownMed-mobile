@@ -11,7 +11,9 @@ import * as Crypto from "expo-crypto";
 
 import type {
     FamilyMember,
+    LocalReport,
     Medicine,
+    ReportCategory,
     UserProfile,
 } from "@/components/dashboard/types";
 import {
@@ -30,6 +32,16 @@ import {
     type UpdateProfileInput,
 } from "@/lib/api";
 import { recoverFromLocal } from "@/lib/medicineSchedule";
+import { syncMedicineReminders } from "@/lib/notifications";
+import {
+    deleteReportFile,
+    localFileExists,
+    persistReportFile,
+    persistThumbnailFile,
+    resolveSize,
+    uploadReportFiles,
+    type PickedReportFile,
+} from "@/lib/reports";
 import {
     clearAuthTokens,
     loadAuthTokens,
@@ -37,7 +49,9 @@ import {
     loadFamilyLink,
     loadFamilyMembers,
     loadHealthProfile,
+    loadLocalReports,
     loadMedicines,
+    loadNotificationsEnabled,
     loadOnboarded,
     loadSyncPending,
     saveAuthUser,
@@ -45,7 +59,9 @@ import {
     saveFamilyLink,
     saveFamilyMembers,
     saveHealthProfile,
+    saveLocalReports,
     saveMedicines,
+    saveNotificationsEnabled,
     saveOnboarded,
     saveSyncPending,
     type FamilyLink,
@@ -55,6 +71,21 @@ import {
 /** What a form supplies; the id is generated here. */
 type MedicineInput = Omit<Medicine, "id">;
 type FamilyMemberInput = Pick<FamilyMember, "name" | "relation" | "age">;
+/**
+ * What the report form supplies; the id and the stored file are made here.
+ *
+ * An `OptimizedImage` — the picker's file after `optimizeImage` has had it — so
+ * the size recorded is the size that will be uploaded, and the preview it
+ * generated comes along to be saved beside the file.
+ */
+type LocalReportInput = {
+    title: string;
+    category: ReportCategory;
+    takenOn: string;
+    file: PickedReportFile & {
+        thumbnail: { uri: string; sizeBytes: number } | null;
+    };
+};
 
 type AppData = {
     /** True once the values below have been loaded from storage. */
@@ -76,10 +107,34 @@ type AppData = {
     familyLink: FamilyLink | null;
     /** True when local data has not reached the server yet (a sync failed). */
     syncPending: boolean;
+    /**
+     * Whether this device schedules medicine reminders at all.
+     *
+     * A device preference, not an account one: it governs what this phone rings
+     * for, so a second device on the same account answers for itself.
+     */
+    notificationsEnabled: boolean;
+    /** Turn reminders on or off, cancelling or restoring what is scheduled. */
+    setNotificationsEnabled: (enabled: boolean) => void;
+    /**
+     * Reports added on this device that have no account behind them yet — a
+     * guest's, or a signed-in user's whose upload is still owed. They are
+     * uploaded and cleared by `flushPendingReports` on the next sign-in.
+     */
+    localReports: LocalReport[];
     completeOnboarding: (profile: HealthProfile) => void;
     skipOnboarding: () => void;
     addMedicine: (input: MedicineInput) => void;
     addFamilyMember: (input: FamilyMemberInput) => void;
+    /**
+     * Keep a report on this device, copying the picked file into app storage.
+     *
+     * Throws if the file cannot be copied (no space, for instance) — the form
+     * needs to say so rather than show a row that opens nothing.
+     */
+    addLocalReport: (input: LocalReportInput) => Promise<void>;
+    /** Remove a device-only report and its file. */
+    deleteLocalReport: (id: string) => Promise<void>;
     /** Resolve a Family ID to its owner without linking yet. Throws if unknown. */
     lookupFamily: (shareId: string) => Promise<FamilyContact>;
     /** Start managing a resolved family member's data. */
@@ -120,23 +175,37 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
     const [familyLink, setFamilyLink] = useState<FamilyLink | null>(null);
     const [syncPending, setSyncPending] = useState(false);
+    const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
+    const [localReports, setLocalReports] = useState<LocalReport[]>([]);
 
     useEffect(() => {
         let cancelled = false;
 
         (async () => {
             try {
-                const [o, profile, user, meds, members, link, pending, tokens] =
-                    await Promise.all([
-                        loadOnboarded(),
-                        loadHealthProfile(),
-                        loadAuthUser(),
-                        loadMedicines(),
-                        loadFamilyMembers(),
-                        loadFamilyLink(),
-                        loadSyncPending(),
-                        loadAuthTokens(),
-                    ]);
+                const [
+                    o,
+                    profile,
+                    user,
+                    meds,
+                    members,
+                    link,
+                    pending,
+                    tokens,
+                    reports,
+                    reminders,
+                ] = await Promise.all([
+                    loadOnboarded(),
+                    loadHealthProfile(),
+                    loadAuthUser(),
+                    loadMedicines(),
+                    loadFamilyMembers(),
+                    loadFamilyLink(),
+                    loadSyncPending(),
+                    loadAuthTokens(),
+                    loadLocalReports(),
+                    loadNotificationsEnabled(),
+                ]);
                 if (cancelled) return;
                 setOnboarded(o);
                 setHealthProfile(profile);
@@ -145,6 +214,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 setFamilyMembers(members);
                 setFamilyLink(link);
                 setSyncPending(pending);
+                setLocalReports(reports);
+                setNotificationsEnabledState(reminders);
                 // Only ever present for a remembered session — a session-only
                 // sign-in leaves nothing on disk to restore. The access token
                 // is very likely expired by now; the first authenticated call
@@ -165,6 +236,38 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             cancelled = true;
         };
     }, []);
+
+    /**
+     * Keep the phone's medicine reminders in step with this device's medicines.
+     *
+     * Keyed on `medicines` so it also runs after an add and after a sign-in
+     * merge, and on `hydrated` so the first run happens once storage has been
+     * read — scheduling before that would reconcile against an empty list and
+     * cancel everything already scheduled.
+     *
+     * It reads the medicines back from **storage** rather than using the
+     * `medicines` in state, and that distinction is the whole point: while a
+     * family member is linked, the on-screen list is *theirs*, and their
+     * medicines are managed from their own phone — ringing here for a relative's
+     * dose would be both surprising and wrong. `loadMedicines` is always this
+     * device's own list, whatever the link is doing to the UI.
+     *
+     * Fire-and-forget, like `pushOwnMedicine`: the helper never throws, and a
+     * reminder that could not be scheduled must not disturb the list.
+     *
+     * Keyed on `notificationsEnabled` as well, so flipping the switch is itself a
+     * reconciliation — off empties the desired set and cancels, on rebuilds it —
+     * rather than a separate cancel/restore path that could drift from this one.
+     */
+    useEffect(() => {
+        if (!hydrated) return;
+        void loadMedicines()
+            .then((meds) => syncMedicineReminders(meds, notificationsEnabled))
+            .catch(() => {
+                // A failed storage read leaves whatever is already scheduled in
+                // place rather than cancelling it — the next run reconciles.
+            });
+    }, [hydrated, medicines, notificationsEnabled]);
 
     /**
      * What to do about the two things a token refresh can tell us.
@@ -243,6 +346,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
 
     /**
+     * Turn medicine reminders on or off for this device.
+     *
+     * State and disk only — the reminders themselves are reconciled by the effect
+     * keyed on this value, so a schedule that fails to update is repaired on the
+     * next run rather than leaving the switch disagreeing with the OS.
+     */
+    const setNotificationsEnabled = (enabled: boolean) => {
+        setNotificationsEnabledState(enabled);
+        void saveNotificationsEnabled(enabled);
+    };
+
+    /**
      * Push an add to the linked family member's account, then adopt the merged
      * result so a second person editing the same list stays in sync.
      *
@@ -318,6 +433,157 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             return;
         }
         void saveFamilyMembers(next);
+    };
+
+    /**
+     * Keep a report on this device, copying the picked file out of the picker's
+     * cache and into app storage.
+     *
+     * The copy is what makes a guest's report durable: a picker hands back a
+     * temporary URI, and the record has to still open after a restart. That is
+     * also why this **throws** where `addMedicine` does not — a record whose file
+     * never arrived would render a row that opens nothing, and only the copy can
+     * fail.
+     *
+     * Reports are deliberately not part of the family share (see the server's
+     * `routes/reports.ts`), so one added here belongs to whoever holds the
+     * device even while a family link is active.
+     */
+    const addLocalReport = async (input: LocalReportInput) => {
+        const id = Crypto.randomUUID();
+        const uri = await persistReportFile(input.file, id);
+
+        // Saved after the file, and deliberately allowed to fail: the preview is
+        // a convenience, so a copy that cannot be made must not take the report
+        // down with it. `""` is the same value a PDF carries, and the list
+        // renders the category icon for it.
+        const thumbnailUri = input.file.thumbnail
+            ? await persistThumbnailFile(input.file.thumbnail.uri, id).catch(
+                  () => "",
+              )
+            : "";
+
+        const report: LocalReport = {
+            id,
+            title: input.title,
+            category: input.category,
+            takenOn: input.takenOn,
+            file: {
+                uri,
+                thumbnailUri,
+                fileName: input.file.name,
+                mimeType: input.file.mimeType,
+                sizeBytes: input.file.sizeBytes,
+            },
+        };
+
+        const next = [report, ...localReports];
+        setLocalReports(next);
+        await saveLocalReports(next);
+    };
+
+    const deleteLocalReport = async (id: string) => {
+        const report = localReports.find((entry) => entry.id === id);
+        const next = localReports.filter((entry) => entry.id !== id);
+        setLocalReports(next);
+        await saveLocalReports(next);
+        // File last, and only once the record is gone: the record is what the
+        // list renders, so a failed unlink after this orphans a file nothing
+        // points at, rather than leaving a row that opens nothing.
+        if (report) {
+            deleteReportFile(report.file.uri);
+            // The preview is a second file belonging to the same record, and
+            // nothing else references it — left behind it would be unreachable.
+            if (report.file.thumbnailUri !== "") {
+                deleteReportFile(report.file.thumbnailUri);
+            }
+        }
+    };
+
+    /**
+     * Upload the reports this device is holding, and clear the local copies.
+     *
+     * This is what a guest's reports were waiting for: the same three calls the
+     * signed-in form makes — ask for a signed URL, PUT the bytes, record the row
+     * — because the file never passes through the API.
+     *
+     * Per-report rather than all-or-nothing: one bad file must not strand the
+     * rest, so a failure leaves *that* record on the device to be retried on the
+     * next sign-in while the others go up. Best-effort and silent for the same
+     * reason `syncWithAccount` is — it runs inside sign-in, and a report that
+     * cannot upload must never be what stops someone signing in.
+     *
+     * Guarded on the live session token rather than `authUser`: the callers run
+     * immediately after `persistSession`, whose `setAuthUser` has not rendered
+     * yet, so the state variable still reads as signed out here.
+     */
+    const flushPendingReports = async () => {
+        if (!getRefreshToken() || localReports.length === 0) return;
+
+        const remaining: LocalReport[] = [];
+        for (const report of localReports) {
+            try {
+                const target = await api.getReportUploadUrl({
+                    id: report.id,
+                    fileName: report.file.fileName,
+                    mimeType: report.file.mimeType,
+                    sizeBytes: report.file.sizeBytes,
+                });
+
+                // A preview that is no longer on disk is dropped rather than
+                // uploaded: `uploadReportFile` would throw on the missing file,
+                // and a report whose *preview* has been reclaimed by the OS must
+                // not be held back on the device forever over it.
+                const thumbnail =
+                    report.file.thumbnailUri !== "" &&
+                    localFileExists(report.file.thumbnailUri)
+                        ? {
+                              uri: report.file.thumbnailUri,
+                              sizeBytes: resolveSize(
+                                  report.file.thumbnailUri,
+                                  undefined,
+                              ),
+                          }
+                        : null;
+
+                await uploadReportFiles(
+                    target,
+                    {
+                        uri: report.file.uri,
+                        name: report.file.fileName,
+                        mimeType: report.file.mimeType,
+                        sizeBytes: report.file.sizeBytes,
+                    },
+                    thumbnail,
+                );
+
+                await api.createReport({
+                    id: report.id,
+                    title: report.title,
+                    category: report.category,
+                    takenOn: report.takenOn,
+                    file: {
+                        storageKey: target.storageKey,
+                        fileName: report.file.fileName,
+                        mimeType: report.file.mimeType,
+                        sizeBytes: report.file.sizeBytes,
+                        thumbnailKey: target.thumbnailKey,
+                    },
+                });
+
+                // Only now is the local copy redundant. Deleting it before the
+                // row exists would lose the only copy of the file.
+                deleteReportFile(report.file.uri);
+                if (report.file.thumbnailUri !== "") {
+                    deleteReportFile(report.file.thumbnailUri);
+                }
+            } catch {
+                remaining.push(report);
+            }
+        }
+
+        setLocalReports(remaining);
+        await saveLocalReports(remaining).catch(() => {});
     };
 
     /**
@@ -454,12 +720,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         const auth = await api.register(input);
         await persistSession(auth, true);
         await syncWithAccount();
+        // Reports are not part of `/sync` (the file never passes through the
+        // API), so the local ones are carried up separately.
+        await flushPendingReports();
     };
 
     const signIn = async (input: LoginInput, rememberMe: boolean) => {
         const auth = await api.login(input);
         await persistSession(auth, rememberMe);
         await syncWithAccount();
+        await flushPendingReports();
     };
 
     const requestPasswordReset = async (input: PasswordResetRequestInput) => {
@@ -513,10 +783,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 familyMembers,
                 familyLink,
                 syncPending,
+                localReports,
+                notificationsEnabled,
                 completeOnboarding,
                 skipOnboarding,
+                setNotificationsEnabled,
                 addMedicine,
                 addFamilyMember,
+                addLocalReport,
+                deleteLocalReport,
                 lookupFamily,
                 connectFamily,
                 disconnectFamily,

@@ -1,17 +1,20 @@
 import { useState } from "react";
 import { router } from "expo-router";
 import {
+    Bell,
     ChevronRight,
     Languages,
     RefreshCw,
     SunMoon,
     User,
+    Volume2,
     type LucideIcon,
 } from "lucide-react-native";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAppData } from "@/context/AppDataContext";
+import { remindersSupported, scheduleTestReminder } from "@/lib/notifications";
 import { brand, useAppTheme } from "@/theme";
 
 type SettingItem = {
@@ -24,7 +27,8 @@ type SettingItem = {
 
 export default function SettingsScreen() {
     const { isDark, colors, toggleColorScheme } = useAppTheme();
-    const { hydrated, authUser } = useAppData();
+    const { hydrated, authUser, notificationsEnabled, setNotificationsEnabled } =
+        useAppData();
     const [language, setLanguage] = useState<"English" | "Bangla">("English");
 
     /**
@@ -37,6 +41,33 @@ export default function SettingsScreen() {
      * during the moment before `authUser` is read back from storage.
      */
     const showSync = hydrated && !authUser;
+
+    // A constant for the life of the process, so it is read once here rather
+    // than inside the row where it would be easy to mistake for state.
+    const supportsReminders = remindersSupported();
+
+    /**
+     * Development only: post one reminder five seconds from now, so a new voice
+     * clip can be heard without waiting for a real dose time. See
+     * `scheduleTestReminder` for why it reports its outcome instead of
+     * swallowing it, and why a channel that already has a sound may ignore a
+     * replacement clip.
+     *
+     * The alert is the whole interface. A test that only worked, or only failed,
+     * silently would be indistinguishable from the button not being wired up.
+     */
+    const testReminderSound = () => {
+        void scheduleTestReminder().then((result) => {
+            Alert.alert(
+                result.scheduled
+                    ? "Test reminder scheduled"
+                    : "Test reminder failed",
+                result.scheduled
+                    ? "It will arrive in a few seconds. Leave the app to hear it the way a real reminder arrives."
+                    : result.reason,
+            );
+        });
+    };
 
     const items: SettingItem[] = [
         { id: "profile", icon: User, label: "Profile" },
@@ -57,6 +88,45 @@ export default function SettingsScreen() {
             value: isDark ? "Dark" : "Light",
             onPress: toggleColorScheme,
         },
+        // The master switch for medicine reminders. It reads as a value row like
+        // Theme and Language rather than a `Switch`, because a row that both
+        // states its value and is tappable anywhere is the same shape the rest of
+        // this list already uses — one gesture, one target, no small control to
+        // hit. Off cancels every scheduled dose; see `syncMedicineReminders`.
+        //
+        // "Unavailable" is a real state and not a placeholder: Expo Go on
+        // Android cannot load the notifications module at all, so the honest
+        // answer there is that the switch has nothing behind it.
+        {
+            id: "notifications",
+            icon: Bell,
+            label: "Medicine reminders",
+            value: !supportsReminders
+                ? "Unavailable"
+                : notificationsEnabled
+                  ? "On"
+                  : "Off",
+            onPress: supportsReminders
+                ? () => setNotificationsEnabled(!notificationsEnabled)
+                : undefined,
+        },
+        // Development only, and deliberately *not* gated on `supportsReminders`
+        // the way the row above is: the state most worth being able to poke at
+        // is the one where reminders cannot load at all, so tapping this has to
+        // report the reason rather than the row quietly not being there.
+        ...(__DEV__
+            ? [
+                  {
+                      id: "test-sound",
+                      icon: Volume2,
+                      label: "Test reminder sound",
+                      // Sits where the other rows state their value, so it reads
+                      // as a dev tool rather than a real preference.
+                      value: "Dev only",
+                      onPress: testReminderSound,
+                  },
+              ]
+            : []),
         {
             id: "language",
             icon: Languages,

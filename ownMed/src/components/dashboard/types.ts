@@ -5,7 +5,8 @@ export type SectionId =
     | "profile"
     | "add-medicine"
     | "medicine-history"
-    | "family";
+    | "family"
+    | "reports";
 
 export type Section = {
     id: SectionId;
@@ -119,6 +120,90 @@ export type FamilyMember = {
     age: number;
     healthStatus: string;
     status: "stable" | "attention";
+};
+
+/** What kind of document a report is. Drives the label and the list's icon. */
+export type ReportCategory = "lab" | "prescription" | "xray" | "other";
+
+/**
+ * The uploaded document behind a report.
+ *
+ * The bytes live in object storage, not on this device, so there is no local
+ * URI here — `storageKey` names the object and the server trades it for a
+ * short-lived URL when the report is opened. That is why nothing in this shape
+ * is viewable offline.
+ */
+export type ReportFile = {
+    /** The object's key in the bucket; also what the server signs a URL for. */
+    storageKey: string;
+    /** The name the file had on the device, shown in the list. */
+    fileName: string;
+    /** e.g. "application/pdf" or "image/jpeg" — decides how it is opened. */
+    mimeType: string;
+    sizeBytes: number;
+    /**
+     * The key of a small preview of this report, generated on the device and
+     * uploaded beside the file. `""` when there is none — a PDF has no pixels to
+     * shrink, and rows written before previews existed have none either, which
+     * the list renders as the category icon instead.
+     */
+    thumbnailKey: string;
+};
+
+/**
+ * An uploaded medical document — a lab result, a scan, a prescription.
+ *
+ * Unlike `Medicine` and `FamilyMember`, a report is **not** part of the local
+ * snapshot that `/sync` merges: there is no AsyncStorage copy, and the list is
+ * read from the server each time the section opens. A report also belongs only
+ * to the account that uploaded it — it is not exposed by Family ID.
+ */
+export type Report = {
+    id: string;
+    title: string;
+    category: ReportCategory;
+    /** The date the report is *about*, "YYYY-MM-DD"; "" when not recorded. */
+    takenOn: string;
+    file: ReportFile;
+};
+
+/**
+ * A report that exists only on this device.
+ *
+ * A guest has no account for a report to belong to, so there is nowhere on the
+ * server to put one and no `userId` to key the object under. Rather than refuse
+ * the upload outright, the file is kept in the app's own document directory and
+ * this record points at it — the same local-first bargain as `Medicine`: the
+ * data is real and usable, but it is *this device's*, so uninstalling the app
+ * takes it with it.
+ *
+ * The difference from `Report` is `file.uri`: a server report names an object in
+ * the bucket, while this names a file in the app's sandbox. Signing in is what
+ * promotes one of these into a `Report` — see `flushPendingReports`.
+ */
+export type LocalReport = {
+    id: string;
+    title: string;
+    category: ReportCategory;
+    /** The date the report is *about*, "YYYY-MM-DD"; "" when not recorded. */
+    takenOn: string;
+    file: {
+        /** A `file://` path inside the app's document directory. */
+        uri: string;
+        /**
+         * A `file://` path to a small preview, saved next to the file. `""` when
+         * there is none — a PDF, or a record written before previews existed.
+         * Kept as a file rather than re-derived on each render so the list does
+         * not decode the full-size image just to draw a 44 px square, which is
+         * the whole reason it exists.
+         */
+        thumbnailUri: string;
+        /** The name the file had when it was picked, shown in the list. */
+        fileName: string;
+        /** e.g. "application/pdf" — decides how it is opened. */
+        mimeType: string;
+        sizeBytes: number;
+    };
 };
 
 export type UserProfile = {

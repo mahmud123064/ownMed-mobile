@@ -3,6 +3,9 @@ import Constants from "expo-constants";
 import type {
     FamilyMember,
     Medicine,
+    Report,
+    ReportCategory,
+    ReportFile,
     UserProfile,
 } from "@/components/dashboard/types";
 
@@ -115,6 +118,46 @@ export type SyncData = {
 export type FamilyData = {
     medicines: Medicine[];
     familyMembers: FamilyMember[];
+};
+
+/**
+ * Where to send a report's bytes, and what keys they will live under.
+ *
+ * The server signs the URL but never sees the file: the upload goes straight
+ * from the device to object storage. `storageKey` is echoed back on
+ * `createReport` so the row can point at the object.
+ *
+ * A preview is signed at the same time, for images only — `thumbnailKey` and
+ * `thumbnailUploadUrl` come back as `""` for a PDF, which has no pixels to
+ * shrink, and for an image whose preview could not be generated. The caller
+ * reads `""` as "there is no preview to upload", not as a failure.
+ */
+export type ReportUploadTarget = {
+    storageKey: string;
+    uploadUrl: string;
+    thumbnailKey: string;
+    thumbnailUploadUrl: string;
+};
+
+/**
+ * Signed preview URLs for the account's reports, keyed by report id.
+ *
+ * Fetched alongside the list rather than carried in it: these expire, so a URL
+ * embedded in the list would be stale by the time a row used it. A report with
+ * no preview — a PDF, or a row written before thumbnails existed — simply has no
+ * entry, and the row falls back to its category icon.
+ */
+export type ReportThumbnailUrls = {
+    urls: Record<string, string>;
+};
+
+/** Everything needed to create a report whose bytes are already uploaded. */
+export type CreateReportInput = {
+    id: string;
+    title: string;
+    category: ReportCategory;
+    takenOn: string;
+    file: ReportFile;
 };
 
 /** Error thrown for non-2xx responses (statusCode 0 = network failure). */
@@ -412,4 +455,68 @@ export const api = {
             method: "POST",
             body: JSON.stringify(input),
         }),
+
+    /* ---------------------------------------------------------------
+     * Reports — uploaded documents.
+     *
+     * Everything here is authenticated: a report belongs to the account
+     * that uploaded it, so there is no guest path and nothing to share by
+     * Family ID. The upload is three calls rather than one, because the
+     * file never passes through the API: ask for a signed URL, PUT the
+     * bytes to storage, then tell the server the object exists.
+     * ------------------------------------------------------------ */
+
+    /** Reserve a storage key and get a signed URL to PUT the file to. */
+    getReportUploadUrl: (input: {
+        id: string;
+        fileName: string;
+        mimeType: string;
+        sizeBytes: number;
+    }): Promise<ReportUploadTarget> =>
+        request<ReportUploadTarget>(
+            "/reports/upload-url",
+            { method: "POST", body: JSON.stringify(input) },
+            true,
+        ),
+    /** Record a report whose bytes have already been uploaded. */
+    createReport: (input: CreateReportInput): Promise<{ report: Report }> =>
+        request<{ report: Report }>(
+            "/reports",
+            { method: "POST", body: JSON.stringify(input) },
+            true,
+        ),
+    /** The account's reports, newest first. */
+    listReports: (): Promise<{ reports: Report[] }> =>
+        request<{ reports: Report[] }>("/reports", {}, true),
+    /**
+     * A fresh URL to read one report from, and its preview.
+     *
+     * Signed on demand because the URLs are short-lived — asking for one when
+     * the report is opened is what keeps it valid long enough to load.
+     * `thumbnailUrl` is "" when the report has no preview.
+     */
+    getReportDownloadUrl: (
+        id: string,
+    ): Promise<{ url: string; thumbnailUrl: string }> =>
+        request<{ url: string; thumbnailUrl: string }>(
+            `/reports/${encodeURIComponent(id)}/download-url`,
+            {},
+            true,
+        ),
+    /**
+     * Signed preview URLs for every report that has one.
+     *
+     * A request of its own rather than part of `listReports`, so a slow or
+     * failing preview never delays the list itself — the caller treats an error
+     * here as "show icons instead" and carries on.
+     */
+    getReportThumbnailUrls: (): Promise<ReportThumbnailUrls> =>
+        request<ReportThumbnailUrls>("/reports/thumbnail-urls", {}, true),
+    /** Remove a report and the object behind it. */
+    deleteReport: (id: string): Promise<void> =>
+        request<void>(
+            `/reports/${encodeURIComponent(id)}`,
+            { method: "DELETE" },
+            true,
+        ),
 };
