@@ -1,89 +1,20 @@
-import { useMemo } from "react";
-import {
-    Activity,
-    Apple,
-    Brain,
-    Droplets,
-    Dumbbell,
-    HeartPulse,
-    Moon,
-    Sun,
-    Wind,
-    type LucideIcon,
-} from "lucide-react-native";
-import { ScrollView, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import { HeartPulse, type LucideIcon } from "lucide-react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import NotificationBell from "@/components/ui/NotificationBell";
+import {
+    TIP_CATEGORIES,
+    TIPS,
+    tipsForCategory,
+    tipOfTheDay,
+    type TipCategoryId,
+} from "@/lib/healthTips";
 import { brand } from "@/theme";
 
-type HealthTip = {
-    id: string;
-    icon: LucideIcon;
-    title: string;
-    description: string;
-    /** Accent hex used for the icon badge tint and icon color. */
-    accent: string;
-};
-
-const TIPS: HealthTip[] = [
-    {
-        id: "hydration",
-        icon: Droplets,
-        title: "Stay hydrated",
-        description: "Sip water through the day — aim for about 8 glasses.",
-        accent: "#0284c7",
-    },
-    {
-        id: "sleep",
-        icon: Moon,
-        title: "Sleep well",
-        description: "Wind down early for 7–9 hours of restful sleep.",
-        accent: "#7c3aed",
-    },
-    {
-        id: "nutrition",
-        icon: Apple,
-        title: "Eat the rainbow",
-        description: "Fill half your plate with colorful fruits and veggies.",
-        accent: "#16a34a",
-    },
-    {
-        id: "movement",
-        icon: Dumbbell,
-        title: "Move daily",
-        description: "Get 30 minutes of activity — a brisk walk counts.",
-        accent: "#dc2626",
-    },
-    {
-        id: "mind",
-        icon: Brain,
-        title: "Protect your mind",
-        description: "Take breaks, breathe, and practice a little mindfulness.",
-        accent: "#f59e0b",
-    },
-    {
-        id: "sunlight",
-        icon: Sun,
-        title: "Catch the sun",
-        description: "Step outside for a dose of vitamin D each morning.",
-        accent: "#06c7ab",
-    },
-    {
-        id: "posture",
-        icon: Activity,
-        title: "Stretch it out",
-        description: "Stand and stretch every hour to keep muscles loose.",
-        accent: "#0d9488",
-    },
-    {
-        id: "breathe",
-        icon: Wind,
-        title: "Just breathe",
-        description: "Slow, deep breaths calm the nervous system fast.",
-        accent: "#4f46e5",
-    },
-];
+/** "All" plus the four category filters. */
+type TipFilter = "all" | TipCategoryId;
 
 /** Hex → rgba with a soft 12% alpha, for tinted icon badges. */
 function tint(hex: string, alpha = 0.14): string {
@@ -93,18 +24,74 @@ function tint(hex: string, alpha = 0.14): string {
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+/**
+ * One chip in the filter bar — icon, name and how many tips it holds.
+ *
+ * Built here rather than reusing `Chip`, which is label-only and serves the
+ * gender / blood-group rows; a chip carrying an icon and a count would have to
+ * widen that component for no benefit to its existing callers.
+ */
+function FilterChip({
+    label,
+    count,
+    icon: Icon,
+    accent,
+    active,
+    onPress,
+}: {
+    label: string;
+    count: number;
+    icon: LucideIcon;
+    accent: string;
+    active: boolean;
+    onPress: () => void;
+}) {
+    return (
+        <Pressable
+            onPress={onPress}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            className={`flex-row items-center gap-1.5 rounded-2xl border px-3 py-2 ${
+                active
+                    ? "border-brand-600 bg-brand-600/10"
+                    : "border-border bg-surface"
+            }`}
+        >
+            <Icon
+                color={active ? brand[600] : accent}
+                size={16}
+                strokeWidth={2}
+            />
+            <Text
+                className={`text-sm ${
+                    active
+                        ? "font-semibold text-brand-700"
+                        : "font-sans text-muted"
+                }`}
+            >
+                {label}
+            </Text>
+            <Text
+                className={`text-xs ${
+                    active
+                        ? "font-semibold text-brand-700"
+                        : "font-sans text-muted"
+                }`}
+            >
+                {count}
+            </Text>
+        </Pressable>
+    );
+}
+
 export default function HealthTipsScreen() {
     // Rotate the featured "Tip of the Day" by calendar date.
-    const featured = useMemo(() => {
-        const now = new Date();
-        const start = new Date(now.getFullYear(), 0, 0);
-        const dayOfYear = Math.floor(
-            (now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24),
-        );
-        return TIPS[dayOfYear % TIPS.length];
-    }, []);
+    const featured = useMemo(() => tipOfTheDay(), []);
+    // "All" first, so the tab still opens on the full list.
+    const [filter, setFilter] = useState<TipFilter>("all");
 
     const FeaturedIcon = featured.icon;
+    const visibleTips = filter === "all" ? TIPS : tipsForCategory(filter);
 
     return (
         <SafeAreaView className="flex-1 bg-background" edges={["top"]}>
@@ -165,13 +152,52 @@ export default function HealthTipsScreen() {
                     </View>
                 </View>
 
-                {/* Tip cards */}
-                <View className="px-6 pt-6">
-                    <Text className="mb-3 text-lg font-semibold text-foreground">
-                        Build your routine
-                    </Text>
-                    <View className="gap-3">
-                        {TIPS.map((tip) => {
+                {/* Tip cards, filtered by area. */}
+                <View className="pt-6">
+                    <View className="px-6">
+                        <Text className="text-lg font-semibold text-foreground">
+                            Build your routine
+                        </Text>
+                        <Text className="mt-1 text-sm font-sans text-muted">
+                            Pick an area, or browse them all.
+                        </Text>
+                    </View>
+
+                    {/* Filter bar. Scrolls edge to edge (`-mx-6` + matching
+                        inner padding) so the next chip is visible rather than
+                        clipped at the margin, which is what invites the swipe. */}
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        className="-mx-6 mt-3"
+                        contentContainerStyle={{
+                            paddingHorizontal: 24,
+                            gap: 8,
+                        }}
+                    >
+                        <FilterChip
+                            label="All"
+                            count={TIPS.length}
+                            icon={HeartPulse}
+                            accent={brand[600]}
+                            active={filter === "all"}
+                            onPress={() => setFilter("all")}
+                        />
+                        {TIP_CATEGORIES.map((category) => (
+                            <FilterChip
+                                key={category.id}
+                                label={category.label}
+                                count={tipsForCategory(category.id).length}
+                                icon={category.icon}
+                                accent={category.accent}
+                                active={filter === category.id}
+                                onPress={() => setFilter(category.id)}
+                            />
+                        ))}
+                    </ScrollView>
+
+                    <View className="mt-4 gap-3 px-6">
+                        {visibleTips.map((tip) => {
                             const Icon = tip.icon;
                             return (
                                 <View
