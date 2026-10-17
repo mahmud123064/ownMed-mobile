@@ -26,11 +26,45 @@ export const syncRouter = Router();
  * rows, and a retry after a flaky network is always safe.
  */
 
+/**
+ * The blood groups a user can pick, as the client stores them — the literal
+ * label, so there is no enum to translate on the way through. `""` is the unset
+ * state, the same convention the rest of this API uses for a blank.
+ *
+ * Lives here rather than in `routes/auth.ts` because this file is what `auth.ts`
+ * already imports its validators from (`calendarDateSchema`), so the shared
+ * pieces travel one way. Two surfaces accept a blood group — the account's
+ * `PATCH /auth/me` and the health profile below — and they are the same eight
+ * values, so there is one list to widen rather than two to keep in step.
+ */
+export const BLOOD_GROUP_VALUES = [
+  "A+",
+  "A-",
+  "B+",
+  "B-",
+  "AB+",
+  "AB-",
+  "O+",
+  "O-",
+  "",
+] as const;
+
+/**
+ * The health profile as the app stores it, plus `bloodGroup`, which replaced the
+ * two blood-pressure fields.
+ *
+ * Every key is optional-with-default, so a device on the previous build — which
+ * still sends `bloodPressureSys`/`bloodPressureDia` and no `bloodGroup` — keeps
+ * syncing. Its payload validates, the unknown pressure keys are ignored, and the
+ * profile is simply written with no blood group; a required field here would
+ * have 400-ed that device's whole sync instead. (Zod strips unknown keys by
+ * default, which is what makes the old pair harmless rather than a validation
+ * error.)
+ */
 const healthProfileSchema = z.object({
   weightKg: z.string().trim().max(20).optional().default(""),
   heightCm: z.string().trim().max(20).optional().default(""),
-  bloodPressureSys: z.string().trim().max(20).optional().default(""),
-  bloodPressureDia: z.string().trim().max(20).optional().default(""),
+  bloodGroup: z.enum(BLOOD_GROUP_VALUES).optional().default(""),
   gender: z.enum(["male", "female", ""]).optional().default(""),
 });
 
@@ -140,8 +174,13 @@ function toHealthProfile(row: HealthProfile) {
   return {
     weightKg: row.weightKg ?? "",
     heightCm: row.heightCm ?? "",
-    bloodPressureSys: row.bloodPressureSys ?? "",
-    bloodPressureDia: row.bloodPressureDia ?? "",
+    // Clamped like `gender` below, and like `mealTiming` in `toMedicine`: the
+    // column is plain `text`, so without this a hand-edited value would reach
+    // the client and be echoed straight back into a payload this API then
+    // rejects — one bad row failing an entire sync. `""` is in the list, so the
+    // blank case falls out of the same lookup.
+    bloodGroup:
+      BLOOD_GROUP_VALUES.find((group) => group === row.bloodGroup) ?? "",
     gender:
       row.gender === "male" || row.gender === "female" ? row.gender : "",
   };
@@ -313,5 +352,42 @@ syncRouter.post(
 
     // Return the merged state so the client can simply adopt it.
     res.json(await snapshot(userId));
+  }),
+);
+
+/**
+ * Save the account's health profile outright.
+ *
+ * Deliberately *not* part of `POST /sync`, whose profile write is a **seed** —
+ * it runs only when the account has none, so a returning account is never
+ * clobbered by whatever an anonymous device happened to be holding. That guard
+ * is load-bearing and stays. This is the opposite act: the user, signed in, on
+ * a screen that shows them their own numbers, saying what they are. Sending it
+ * through `/sync` would have it accepted and silently dropped, which is the
+ * worst of both.
+ *
+ * So it upserts. The unique index on `user_id` makes the conflict target exact,
+ * and `updatedAt` moves with the values so the row records when they changed.
+ * The body is validated with the same `healthProfileSchema` the sync uses, so
+ * an unknown blood group is refused here for the same reason and in the same
+ * shape as it would be there.
+ */
+syncRouter.put(
+  "/health-profile",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const input = validate(healthProfileSchema, req.body);
+
+    const [profile] = await db
+      .insert(healthProfiles)
+      .values({ userId, ...input })
+      .onConflictDoUpdate({
+        target: healthProfiles.userId,
+        set: { ...input, updatedAt: new Date() },
+      })
+      .returning();
+
+    res.json({ healthProfile: toHealthProfile(profile) });
   }),
 );

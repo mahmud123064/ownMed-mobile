@@ -23,7 +23,10 @@ import {
   registerLimiter,
 } from "../utils/rateLimit.js";
 import { generateUniqueShareId } from "../utils/shareId.js";
-import { calendarDateSchema } from "./sync.js";
+// The blood groups are shared with the health profile's validator, and the
+// calendar-date schema with `dateOfBirth` below — so `sync.ts` is where both
+// live and this file imports them.
+import { BLOOD_GROUP_VALUES, calendarDateSchema } from "./sync.js";
 import {
   generateResetCode,
   hashRefreshToken,
@@ -102,23 +105,6 @@ const changePasswordSchema = z.object({
     .min(6, "Password must be at least 6 characters")
     .max(200),
 });
-
-/**
- * The blood groups a user can pick, as the client stores them — the literal
- * label, so there is no enum to translate on the way through. `""` is the
- * unset state, the same convention the rest of this API uses for a blank.
- */
-const BLOOD_GROUP_VALUES = [
-  "A+",
-  "A-",
-  "B+",
-  "B-",
-  "AB+",
-  "AB-",
-  "O+",
-  "O-",
-  "",
-] as const;
 
 const genderValues = ["male", "female", "other", ""] as const;
 

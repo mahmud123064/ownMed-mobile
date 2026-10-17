@@ -12,6 +12,7 @@ import {
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import NotificationBell from "@/components/ui/NotificationBell";
 import { brand } from "@/theme";
 
 type Feature = {
@@ -82,13 +83,16 @@ export default function HomeScreen() {
                             OwnMed
                         </Text>
                     </View>
-                    <Link href="/sign-in" asChild>
-                        <Pressable className="rounded-full border border-border bg-surface px-4 py-2">
-                            <Text className="text-sm font-semibold text-foreground">
-                                Sign in
-                            </Text>
-                        </Pressable>
-                    </Link>
+                    <View className="flex-row items-center gap-3">
+                        <NotificationBell />
+                        <Link href="/sign-in" asChild>
+                            <Pressable className="rounded-full border border-border bg-surface px-4 py-2">
+                                <Text className="text-sm font-semibold text-foreground">
+                                    Sign in
+                                </Text>
+                            </Pressable>
+                        </Link>
+                    </View>
                 </View>
 
                 {/* Hero */}

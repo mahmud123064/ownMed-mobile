@@ -14,6 +14,7 @@ import {
 import { ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import NotificationBell from "@/components/ui/NotificationBell";
 import { brand } from "@/theme";
 
 type HealthTip = {
@@ -112,23 +113,26 @@ export default function HealthTipsScreen() {
                 contentContainerStyle={{ paddingBottom: 32 }}
             >
                 {/* Header */}
-                <View className="px-6 pt-4">
-                    <View className="flex-row items-center gap-2">
-                        {/* <Sparkles
-                            color={brand[500]}
-                            size={20}
-                            strokeWidth={2.2}
-                        /> */}
-                        {/* <Text className="text-sm font-semibold uppercase tracking-wider text-brand-600">
-                            Daily wellness
-                        </Text> */}
+                <View className="flex-row items-start justify-between gap-3 px-6 pt-4">
+                    <View className="flex-1">
+                        <View className="flex-row items-center gap-2">
+                            {/* <Sparkles
+                                color={brand[500]}
+                                size={20}
+                                strokeWidth={2.2}
+                            /> */}
+                            {/* <Text className="text-sm font-semibold uppercase tracking-wider text-brand-600">
+                                Daily wellness
+                            </Text> */}
+                        </View>
+                        <Text className="mt-2 text-3xl font-display-bold text-foreground">
+                            Health Tips
+                        </Text>
+                        <Text className="mt-1 text-base font-sans text-muted">
+                            Small habits, every day, add up to a healthier you.
+                        </Text>
                     </View>
-                    <Text className="mt-2 text-3xl font-display-bold text-foreground">
-                        Health Tips
-                    </Text>
-                    <Text className="mt-1 text-base font-sans text-muted">
-                        Small habits, every day, add up to a healthier you.
-                    </Text>
+                    <NotificationBell />
                 </View>
 
                 {/* Featured tip of the day */}

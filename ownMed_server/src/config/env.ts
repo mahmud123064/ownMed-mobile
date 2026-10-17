@@ -64,6 +64,17 @@ export const env = Object.freeze({
     r2AccessKeyId !== "" &&
     r2SecretAccessKey !== "" &&
     r2Bucket !== "",
+  // App release info, served by `GET /app/version` so an installed build can
+  // ask whether a newer one exists. Optional: with `latestAppVersion` empty the
+  // route announces nothing and the client shows no notice — the correct state
+  // for a fresh clone and for the window before a first release. Read from here
+  // rather than derived from this package's own version, because the whole
+  // point of the check is a value that can move without shipping a build.
+  latestAppVersion: process.env.LATEST_APP_VERSION ?? "",
+  // Where an update notice sends the user. Kept beside the version instead of
+  // derived per-platform, since the store listing may not exist yet; empty
+  // renders the notice as information with nothing to tap.
+  storeUrl: process.env.STORE_URL ?? "",
   // Browser origins allowed to call the API, comma-separated. The mobile app
   // sends no `Origin` and is never subject to CORS, so an empty list costs it
   // nothing; in production an empty list is a deny for web clients.

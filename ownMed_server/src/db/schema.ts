@@ -125,8 +125,11 @@ export const healthProfiles = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     weightKg: text("weight_kg"),
     heightCm: text("height_cm"),
-    bloodPressureSys: text("blood_pressure_sys"),
-    bloodPressureDia: text("blood_pressure_dia"),
+    // A blood-group label like "O+", the same eight the account's own
+    // `users.blood_group` accepts. Blank is a real answer here — the onboarding
+    // step it comes from is skippable — and `toHealthProfile` flattens both that
+    // and a NULL predating this column to "".
+    bloodGroup: text("blood_group"),
     gender: text("gender"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

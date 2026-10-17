@@ -4,27 +4,18 @@ import {
     House,
     LayoutDashboard,
     LogIn,
-    Ruler,
     Settings,
     ShieldCheck,
     User,
-    Weight,
     type LucideIcon,
 } from "lucide-react-native";
-import {
-    Modal,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    View,
-} from "react-native";
+import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 
-import FormField from "@/components/ui/FormField";
+import HealthProfileForm from "@/components/ui/HealthProfileForm";
 import { useAppData } from "@/context/AppDataContext";
+import { BLANK_HEALTH_PROFILE, type HealthProfile } from "@/lib/storage";
 import { brand, useAppTheme } from "@/theme";
 
-const GENDERS = ["male", "female"] as const;
 const TOTAL_STEPS = 3;
 
 type TabGuide = {
@@ -147,27 +138,21 @@ function AccountStep() {
 }
 
 export default function OnboardingModal() {
-    const { colors } = useAppTheme();
     const { hydrated, onboarded, completeOnboarding, skipOnboarding } =
         useAppData();
 
     const [step, setStep] = useState(0);
-    const [weightKg, setWeightKg] = useState("");
-    const [heightCm, setHeightCm] = useState("");
-    const [bpSys, setBpSys] = useState("");
-    const [bpDia, setBpDia] = useState("");
-    const [gender, setGender] = useState<"male" | "female" | "">("");
+    /**
+     * The health answers, held here until "Get started" commits them — which is
+     * why the form below is controlled rather than owning its own state. Skip
+     * discards them, and that is the intent rather than an oversight.
+     */
+    const [profile, setProfile] = useState<HealthProfile>(BLANK_HEALTH_PROFILE);
 
     const visible = hydrated && !onboarded;
 
     const handleGetStarted = () => {
-        completeOnboarding({
-            weightKg,
-            heightCm,
-            bloodPressureSys: bpSys,
-            bloodPressureDia: bpDia,
-            gender,
-        });
+        completeOnboarding(profile);
     };
 
     // Mount only when it should actually be visible. Keeping the modal mounted
@@ -231,98 +216,15 @@ export default function OnboardingModal() {
                                             A few details
                                         </Text>
                                         <Text className="mt-1 text-sm font-sans text-muted">
-                                            Help us personalize your dashboard.
-                                            You can skip this.
+                                            Height and weight give you a BMI on
+                                            the dashboard. You can skip this.
                                         </Text>
 
-                                        <View className="mt-4 gap-4">
-                                            <FormField
-                                                label="Weight (kg)"
-                                                icon={Weight}
-                                                value={weightKg}
-                                                onChangeText={setWeightKg}
-                                                placeholder="e.g. 68"
-                                                keyboardType="numeric"
+                                        <View className="mt-4">
+                                            <HealthProfileForm
+                                                value={profile}
+                                                onChange={setProfile}
                                             />
-
-                                            <FormField
-                                                label="Height (cm)"
-                                                icon={Ruler}
-                                                value={heightCm}
-                                                onChangeText={setHeightCm}
-                                                placeholder="e.g. 170"
-                                                keyboardType="numeric"
-                                            />
-
-                                            <View className="gap-2">
-                                                <Text className="text-sm font-medium text-foreground">
-                                                    Blood pressure
-                                                </Text>
-                                                <View className="flex-row items-center gap-3">
-                                                    <TextInput
-                                                        value={bpSys}
-                                                        onChangeText={setBpSys}
-                                                        placeholder="Systolic"
-                                                        placeholderTextColor={
-                                                            colors.muted
-                                                        }
-                                                        keyboardType="numeric"
-                                                        className="flex-1 rounded-2xl border border-border bg-surface px-4 py-3 text-base text-foreground"
-                                                    />
-                                                    <Text className="text-lg text-muted">
-                                                        /
-                                                    </Text>
-                                                    <TextInput
-                                                        value={bpDia}
-                                                        onChangeText={setBpDia}
-                                                        placeholder="Diastolic"
-                                                        placeholderTextColor={
-                                                            colors.muted
-                                                        }
-                                                        keyboardType="numeric"
-                                                        className="flex-1 rounded-2xl border border-border bg-surface px-4 py-3 text-base text-foreground"
-                                                    />
-                                                </View>
-                                            </View>
-
-                                            <View className="gap-2">
-                                                <Text className="text-sm font-medium text-foreground">
-                                                    Gender
-                                                </Text>
-                                                <View className="flex-row gap-3">
-                                                    {GENDERS.map((g) => {
-                                                        const selected =
-                                                            gender === g;
-                                                        return (
-                                                            <Pressable
-                                                                key={g}
-                                                                onPress={() =>
-                                                                    setGender(g)
-                                                                }
-                                                                className={[
-                                                                    "flex-1 items-center justify-center rounded-2xl border py-3",
-                                                                    selected
-                                                                        ? "border-brand-600 bg-brand-600"
-                                                                        : "border-border bg-surface",
-                                                                ].join(" ")}
-                                                            >
-                                                                <Text
-                                                                    className={[
-                                                                        "text-base capitalize",
-                                                                        selected
-                                                                            ? "font-semibold text-white"
-                                                                            : "font-sans text-foreground",
-                                                                    ].join(
-                                                                        " ",
-                                                                    )}
-                                                                >
-                                                                    {g}
-                                                                </Text>
-                                                            </Pressable>
-                                                        );
-                                                    })}
-                                                </View>
-                                            </View>
                                         </View>
                                     </View>
                                 )}

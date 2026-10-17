@@ -94,6 +94,18 @@ export type FamilyContact = {
     name: string;
 };
 
+/**
+ * The newest released app version, as the server reports it.
+ *
+ * `latestVersion` is `""` when no release has been announced — a normal answer,
+ * not a failure, and the client's cue to show no update notice. `storeUrl` may
+ * be `""` independently while there is no store listing to point at.
+ */
+export type AppVersion = {
+    latestVersion: string;
+    storeUrl: string;
+};
+
 /** What the client pushes up: only the parts it actually has. */
 export type SyncPayload = {
     healthProfile?: HealthProfile | null;
@@ -400,6 +412,14 @@ export const api = {
             method: "POST",
             body: JSON.stringify({ refreshToken }),
         }),
+    /**
+     * The newest released app version.
+     *
+     * Unauthenticated like `connectFamily`, and for a related reason: a device
+     * that has not signed in still runs the app and still deserves to be told a
+     * newer build exists. Nothing here is account-specific.
+     */
+    getAppVersion: (): Promise<AppVersion> => request<AppVersion>("/app/version"),
     /** Pull the account's server-side state (used on sign-in). */
     getSync: (): Promise<SyncData> => request<SyncData>("/sync", {}, true),
     /** Push local data up and get the merged state back. */
@@ -407,6 +427,24 @@ export const api = {
         request<SyncData>(
             "/sync",
             { method: "POST", body: JSON.stringify(input) },
+            true,
+        ),
+    /**
+     * Save the health profile to the account.
+     *
+     * A route of its own rather than another field on `postSync`, because the
+     * two mean different things: `postSync` carries a whole device snapshot up
+     * and *seeds* the profile only when the account has none — a returning
+     * account must not be overwritten by whatever an anonymous device was
+     * holding. This is the opposite act: the user, signed in, saying what their
+     * height and weight are now. So it upserts.
+     */
+    putHealthProfile: (
+        profile: HealthProfile,
+    ): Promise<{ healthProfile: HealthProfile }> =>
+        request<{ healthProfile: HealthProfile }>(
+            "/sync/health-profile",
+            { method: "PUT", body: JSON.stringify(profile) },
             true,
         ),
     /** Update the account's editable profile fields. */

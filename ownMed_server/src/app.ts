@@ -4,6 +4,7 @@ import express from "express";
 import { env } from "./config/env.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { notFound } from "./middleware/notFound.js";
+import { appVersionRouter } from "./routes/appVersion.js";
 import { authRouter } from "./routes/auth.js";
 import { familyRouter } from "./routes/family.js";
 import { healthRouter } from "./routes/health.js";
@@ -31,6 +32,9 @@ app.use(cors({ origin: env.isProduction ? env.corsOrigins : true }));
 app.use(express.json({ limit: "1mb" }));
 
 app.use("/health", healthRouter);
+// Unauthenticated: a device that has not signed in still runs the app, and the
+// latest release number is public either way.
+app.use("/app", appVersionRouter);
 app.use("/auth", authRouter);
 app.use("/sync", syncRouter);
 // Unauthenticated by design: the share code is the credential (see routes/family.ts).

@@ -40,9 +40,15 @@ export default function FormField({
 
     return (
         <View className="gap-2">
-            <Text className="text-sm font-medium text-foreground">
-                {label}
-            </Text>
+            {/* An empty label is a real state, not a mistake: the height field
+                in the health form carries its own label row (with the cm /
+                ft-in toggle), so its input must not render a second, blank
+                one — which would also add the gap's worth of dead space. */}
+            {label ? (
+                <Text className="text-sm font-medium text-foreground">
+                    {label}
+                </Text>
+            ) : null}
             <View
                 className={[
                     "flex-row items-center gap-3 rounded-2xl border bg-surface px-4",

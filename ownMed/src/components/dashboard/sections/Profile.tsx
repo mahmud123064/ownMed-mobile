@@ -11,9 +11,11 @@ import {
     View,
 } from "react-native";
 
+import Chip from "@/components/ui/Chip";
 import DateField from "@/components/ui/DateField";
 import FormField from "@/components/ui/FormField";
 import { useAppData } from "@/context/AppDataContext";
+import { BLOOD_GROUPS } from "@/lib/health";
 import { brand, useAppTheme } from "@/theme";
 
 import { GUEST_USER } from "../mock";
@@ -36,56 +38,17 @@ type PasswordForm = {
 };
 
 /**
- * The options the two chip rows offer. Deliberately short lists — these are
- * facts about the person, not free text, and picking is faster and less
- * error-prone than typing on a phone keyboard.
+ * The genders this form offers. Deliberately a short list — a gender is a fact
+ * about the person, not free text, and picking is faster and less error-prone
+ * than typing on a phone keyboard. Wider than the health profile's own list,
+ * which stops at male/female: this one is the account's record of the person, so
+ * it also offers "other".
  */
 const GENDERS = [
     { value: "male", label: "Male" },
     { value: "female", label: "Female" },
     { value: "other", label: "Other" },
 ] as const;
-
-const BLOOD_GROUPS = [
-    "A+",
-    "A-",
-    "B+",
-    "B-",
-    "AB+",
-    "AB-",
-    "O+",
-    "O-",
-] as const;
-
-/** A selectable pill, shared by the gender and blood-group rows. */
-function Chip({
-    label,
-    active,
-    onPress,
-}: {
-    label: string;
-    active: boolean;
-    onPress: () => void;
-}) {
-    return (
-        <Pressable
-            onPress={onPress}
-            className={`rounded-2xl border px-4 py-2 ${
-                active ? "border-brand-600 bg-brand-600/10" : "border-border bg-surface"
-            }`}
-        >
-            <Text
-                className={`text-sm ${
-                    active
-                        ? "font-semibold text-brand-700"
-                        : "font-sans text-muted"
-                }`}
-            >
-                {label}
-            </Text>
-        </Pressable>
-    );
-}
 
 /**
  * Keyed on the signed-in identity so it remounts when the account changes.

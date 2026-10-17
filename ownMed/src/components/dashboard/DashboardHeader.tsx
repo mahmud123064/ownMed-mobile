@@ -1,25 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { router } from "expo-router";
 import * as Clipboard from "expo-clipboard";
-import { Bell, Copy, LogIn, LogOut, Menu } from "lucide-react-native";
-import {
-    Alert,
-    Dimensions,
-    Modal,
-    Pressable,
-    ScrollView,
-    Text,
-    View,
-} from "react-native";
+import { Copy, LogIn, LogOut, Menu } from "lucide-react-native";
+import { Alert, Dimensions, Modal, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import NotificationBell from "@/components/ui/NotificationBell";
 import { useAppData } from "@/context/AppDataContext";
-import {
-    remindersSupported,
-    todayDoses,
-    type ScheduledDose,
-} from "@/lib/notifications";
-import { loadMedicines } from "@/lib/storage";
 import { brand, status, useAppTheme } from "@/theme";
 
 import { GUEST_USER } from "./mock";
@@ -52,28 +39,12 @@ function initialsOf(name: string): string {
 
 export default function DashboardHeader({ onMenuPress }: Props) {
     const { colors } = useAppTheme();
-    const { authUser, signOut, notificationsEnabled } = useAppData();
+    const { authUser, signOut } = useAppData();
     const user = authUser ?? GUEST_USER;
     const insets = useSafeAreaInsets();
     const [accountOpen, setAccountOpen] = useState(false);
     const [anchor, setAnchor] = useState({ top: insets.top + 60, right: 16 });
     const avatarRef = useRef<View>(null);
-
-    /**
-     * Today's doses, or null before the first read.
-     *
-     * Null is a distinct state from an empty list on purpose: "not looked yet"
-     * and "nothing scheduled" render the same if they are both `[]`, and the
-     * dropdown would claim there is nothing due during the moment it is actually
-     * still reading.
-     */
-    const [doses, setDoses] = useState<ScheduledDose[] | null>(null);
-    const [bellOpen, setBellOpen] = useState(false);
-    const [bellAnchor, setBellAnchor] = useState({
-        top: insets.top + 60,
-        right: 16,
-    });
-    const bellRef = useRef<View>(null);
 
     const openAccountMenu = () => {
         avatarRef.current?.measureInWindow((x, y, width, height) => {
@@ -85,60 +56,6 @@ export default function DashboardHeader({ onMenuPress }: Props) {
             setAccountOpen(true);
         });
     };
-
-    const openBellMenu = () => {
-        bellRef.current?.measureInWindow((x, y, width, height) => {
-            const windowWidth = Dimensions.get("window").width;
-            setBellAnchor({
-                top: y + height + 8,
-                right: windowWidth - (x + width),
-            });
-            setBellOpen(true);
-        });
-    };
-
-    /**
-     * Read the schedule when the dropdown opens, not on every render.
-     *
-     * From **storage** rather than the `medicines` in context, and that is the
-     * point: while a family member is linked the on-screen list is *theirs*, but
-     * reminders are scheduled from this device's own list, so listing the linked
-     * member's medicines here would promise a ring that never comes. Reading on
-     * open also keeps a just-added medicine from being missing — the add has
-     * already written to storage by the time the sheet is opened.
-     */
-    useEffect(() => {
-        if (!bellOpen) return;
-        let cancelled = false;
-
-        void loadMedicines()
-            .then((medicines) => {
-                if (!cancelled) setDoses(todayDoses(medicines));
-            })
-            .catch(() => {
-                // Unreadable storage reads as "nothing to show" rather than
-                // leaving a spinner up forever behind a dismissable sheet.
-                if (!cancelled) setDoses([]);
-            });
-
-        return () => {
-            cancelled = true;
-        };
-    }, [bellOpen]);
-
-    /**
-     * The one line under the list, when there is something to say about whether
-     * any of it will actually ring.
-     *
-     * A schedule is still worth showing when reminders cannot fire — it is what
-     * the day holds either way — but showing it silently would let the user
-     * conclude the reminders are broken.
-     */
-    const reminderNote = !remindersSupported()
-        ? "Reminders need a development build on Android."
-        : !notificationsEnabled
-          ? "Reminders are off. Turn them on in Settings."
-          : "";
 
     // Guests have no session to end, so the same menu row offers sign-in.
     const handleAccountAction = () => {
@@ -186,16 +103,7 @@ export default function DashboardHeader({ onMenuPress }: Props) {
                     </Text>
                 </View>
 
-                <Pressable
-                    ref={bellRef}
-                    onPress={openBellMenu}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Today's medicine reminders"
-                    className="h-10 w-10 items-center justify-center rounded-full border border-border bg-surface"
-                >
-                    <Bell color={colors.foreground} size={20} strokeWidth={2} />
-                </Pressable>
+                <NotificationBell />
 
                 <Pressable
                     ref={avatarRef}
@@ -208,104 +116,6 @@ export default function DashboardHeader({ onMenuPress }: Props) {
                     </Text>
                 </Pressable>
             </View>
-
-            {/* Today's doses, positioned under the bell. This is a *schedule*,
-                not a history of delivered notifications: the OS keeps no
-                readable record of those once the app has been killed, whereas
-                the schedule is the same answer every time it is asked. */}
-            <Modal
-                transparent
-                visible={bellOpen}
-                animationType="fade"
-                onRequestClose={() => setBellOpen(false)}
-            >
-                <View className="flex-1">
-                    <Pressable
-                        className="absolute inset-0"
-                        onPress={() => setBellOpen(false)}
-                    />
-                    <View
-                        className="absolute"
-                        style={{ top: bellAnchor.top, right: bellAnchor.right }}
-                    >
-                        <View className="w-72 overflow-hidden rounded-2xl border border-border bg-surface">
-                            <View className="px-4 py-3">
-                                <Text className="text-sm font-semibold text-foreground">
-                                    Today&apos;s medicines
-                                </Text>
-                                <Text className="mt-0.5 text-xs font-sans text-muted">
-                                    {doses === null
-                                        ? "Reading your schedule…"
-                                        : doses.length === 0
-                                          ? "Nothing scheduled for today."
-                                          : `${doses.length} ${doses.length === 1 ? "dose" : "doses"} today`}
-                                </Text>
-                            </View>
-
-                            {doses !== null && doses.length > 0 ? (
-                                <>
-                                    <View className="h-px bg-border" />
-                                    <ScrollView
-                                        className="max-h-80"
-                                        showsVerticalScrollIndicator={false}
-                                    >
-                                        {doses.map((dose, index) => (
-                                            <View
-                                                key={`${dose.medicine.id}:${dose.time}`}
-                                                className={[
-                                                    "flex-row items-center gap-3 px-4 py-3",
-                                                    index < doses.length - 1 &&
-                                                        "border-b border-border",
-                                                ].join(" ")}
-                                            >
-                                                <Text className="text-sm font-semibold text-brand-600">
-                                                    {dose.time}
-                                                </Text>
-                                                <View className="flex-1">
-                                                    <Text
-                                                        numberOfLines={1}
-                                                        className="text-sm font-semibold text-foreground"
-                                                    >
-                                                        {dose.medicine.name.trim() !==
-                                                        ""
-                                                            ? dose.medicine.name
-                                                            : "Medicine"}
-                                                    </Text>
-                                                    {dose.medicine.dosage.trim() !==
-                                                    "" ? (
-                                                        <Text
-                                                            numberOfLines={1}
-                                                            className="mt-0.5 text-xs font-sans text-muted"
-                                                        >
-                                                            {
-                                                                dose.medicine
-                                                                    .dosage
-                                                            }
-                                                        </Text>
-                                                    ) : null}
-                                                </View>
-                                            </View>
-                                        ))}
-                                    </ScrollView>
-                                </>
-                            ) : null}
-
-                            {/* The bell keeps showing what the schedule says even
-                                when nothing will ring, since that is still what
-                                the day holds — but silently, so the reason
-                                belongs on screen next to it. */}
-                            {reminderNote !== "" ? (
-                                <>
-                                    <View className="h-px bg-border" />
-                                    <Text className="px-4 py-3 text-xs font-sans text-muted">
-                                        {reminderNote}
-                                    </Text>
-                                </>
-                            ) : null}
-                        </View>
-                    </View>
-                </View>
-            </Modal>
 
             <Modal
                 transparent

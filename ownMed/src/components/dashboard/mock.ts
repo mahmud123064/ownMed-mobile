@@ -44,6 +44,15 @@ export const GUEST_USER: UserProfile = {
     dateOfBirth: "",
 };
 
+/**
+ * Demo health statistics — **currently unused**. Overview used to render these
+ * as its stat cards, and now builds the BMI card and the four profile facts
+ * from `useAppData().healthProfile` instead (see "Health profile & BMI" in
+ * `AGENTS.md`). They are kept as a fixture rather than deleted because the
+ * shape is still a reasonable one for a section that wants read-only tiles; do
+ * not wire them into Overview again, which would put invented numbers back on
+ * a screen that currently shows only what the user told it.
+ */
 export const HEALTH_SUMMARY: HealthStat[] = [
     {
         id: "hr",
@@ -83,6 +92,7 @@ export const HEALTH_SUMMARY: HealthStat[] = [
     },
 ];
 
+/** Demo activity feed — **currently unused**, same as `HEALTH_SUMMARY` above. */
 export const RECENT_ACTIVITY: ActivityItem[] = [
     {
         id: "1",

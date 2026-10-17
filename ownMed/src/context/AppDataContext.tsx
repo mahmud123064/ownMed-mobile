@@ -32,6 +32,7 @@ import {
     type UpdateProfileInput,
 } from "@/lib/api";
 import { recoverFromLocal } from "@/lib/medicineSchedule";
+import { reconcileUpdateNotice } from "@/lib/notices";
 import { syncMedicineReminders } from "@/lib/notifications";
 import {
     deleteReportFile,
@@ -52,6 +53,7 @@ import {
     loadLocalReports,
     loadMedicines,
     loadNotificationsEnabled,
+    loadNotices,
     loadOnboarded,
     loadSyncPending,
     saveAuthUser,
@@ -62,8 +64,10 @@ import {
     saveLocalReports,
     saveMedicines,
     saveNotificationsEnabled,
+    saveNotices,
     saveOnboarded,
     saveSyncPending,
+    type AppNotice,
     type FamilyLink,
     type HealthProfile,
 } from "@/lib/storage";
@@ -117,6 +121,19 @@ type AppData = {
     /** Turn reminders on or off, cancelling or restoring what is scheduled. */
     setNotificationsEnabled: (enabled: boolean) => void;
     /**
+     * The notices behind the notification bell — an app update, and whatever
+     * follows it. Null before the first read.
+     *
+     * In context rather than inside the bell itself because three screens render
+     * that bell at once and "read" is a single fact about this device: a copy per
+     * screen would let the badge be cleared on one tab and still be standing on
+     * another. Keeping it here also means the version check runs once per launch
+     * rather than once per mounted screen.
+     */
+    notices: AppNotice[] | null;
+    /** Mark every notice read. What opening the bell does. */
+    markNoticesRead: () => void;
+    /**
      * Reports added on this device that have no account behind them yet — a
      * guest's, or a signed-in user's whose upload is still owed. They are
      * uploaded and cleared by `flushPendingReports` on the next sign-in.
@@ -124,6 +141,15 @@ type AppData = {
     localReports: LocalReport[];
     completeOnboarding: (profile: HealthProfile) => void;
     skipOnboarding: () => void;
+    /**
+     * Save an edit to the health details, from the Overview's edit modal.
+     *
+     * Distinct from `completeOnboarding`, which also retires the walkthrough and
+     * is the first time these questions are answered. This one is a plain save
+     * of an already-seen profile, and works for a guest who skipped onboarding
+     * just as well as for a signed-in user correcting a value.
+     */
+    updateHealthProfile: (profile: HealthProfile) => void;
     addMedicine: (input: MedicineInput) => void;
     addFamilyMember: (input: FamilyMemberInput) => void;
     /**
@@ -176,6 +202,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const [familyLink, setFamilyLink] = useState<FamilyLink | null>(null);
     const [syncPending, setSyncPending] = useState(false);
     const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
+    /**
+     * Notices for the bell, or null before the first read.
+     *
+     * Null is a distinct state from an empty list: an empty list and an
+     * uncomputed one both render as no badge, which is the right look for both,
+     * but only one of them is honest about whether the question has been asked.
+     */
+    const [notices, setNotices] = useState<AppNotice[] | null>(null);
     const [localReports, setLocalReports] = useState<LocalReport[]>([]);
 
     useEffect(() => {
@@ -270,6 +304,66 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }, [hydrated, medicines, notificationsEnabled]);
 
     /**
+     * Read the notices on mount, and ask the server whether a newer build exists.
+     *
+     * Here rather than in the bell because three screens render that bell and all
+     * of them must show the same badge — and, as a side benefit, the check runs
+     * once per launch instead of once per mounted screen. The two halves answer
+     * one question between them: storage is what this device has already been
+     * told, and the server's version is what is true now.
+     * `reconcileUpdateNotice` turns the pair into the list that should be on
+     * screen, and its one real rule is the one the badge depends on: a version
+     * already read stays read, a *newer* one comes back unread.
+     *
+     * A failed check is deliberately silent. The app is offline often and a
+     * version lookup is not worth an error for, so the catch keeps whatever is
+     * already stored and adds nothing. Keyed on `hydrated` alone, and that is the
+     * intent rather than an omission: one attempt per launch, because a stale
+     * notice costs the user far less than a spinner in the corner of the screen.
+     */
+    useEffect(() => {
+        if (!hydrated) return;
+        let cancelled = false;
+
+        void (async () => {
+            const [stored, latest] = await Promise.all([
+                loadNotices().catch(() => [] as AppNotice[]),
+                api.getAppVersion().catch(() => null),
+            ]);
+
+            const next =
+                latest === null
+                    ? stored
+                    : reconcileUpdateNotice(
+                          stored,
+                          latest.latestVersion,
+                          latest.storeUrl,
+                      );
+
+            if (cancelled) return;
+            setNotices(next);
+
+            // Persisted only when the server answered *and* something moved.
+            // The reconcile returns a new array every time it runs, so writing
+            // unconditionally would write on every launch with nothing changed.
+            // Comparing serialized rather than by identity is the cheap way to
+            // tell the two apart; a false mismatch costs one needless write,
+            // which is the harmless direction for this to be wrong in.
+            const moved = JSON.stringify(next) !== JSON.stringify(stored);
+            if (latest !== null && moved) {
+                void saveNotices(next).catch(() => {
+                    // Worst case this run's read state is lost; the notice is on
+                    // screen regardless.
+                });
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [hydrated]);
+
+    /**
      * What to do about the two things a token refresh can tell us.
      *
      * Registered once, and deliberately reading `rememberSession` through the
@@ -346,6 +440,29 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
 
     /**
+     * Save the health details edited on the Overview.
+     *
+     * Local-first, then best-effort up — the same shape as `addMedicine`: the
+     * device is written immediately so a guest's edit sticks and so the gauge
+     * redraws without a round trip, and the server is told afterwards only if
+     * there is an account to tell. A failed push is silent rather than surfaced,
+     * matching `syncWithAccount`: this is a save of a few numbers, the local
+     * copy is already correct, and the next `POST /sync` carries the profile up
+     * with everything else.
+     *
+     * Note it does **not** go through `POST /sync`, which only seeds a profile
+     * for an account that has none — a signed-in edit sent that way would be
+     * accepted and silently discarded. See `api.putHealthProfile`.
+     */
+    const updateHealthProfile = (profile: HealthProfile) => {
+        setHealthProfile(profile);
+        void saveHealthProfile(profile);
+        if (authUser) {
+            void api.putHealthProfile(profile).catch(() => {});
+        }
+    };
+
+    /**
      * Turn medicine reminders on or off for this device.
      *
      * State and disk only — the reminders themselves are reconciled by the effect
@@ -355,6 +472,26 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const setNotificationsEnabled = (enabled: boolean) => {
         setNotificationsEnabledState(enabled);
         void saveNotificationsEnabled(enabled);
+    };
+
+    /**
+     * Mark every notice read, which is what opening the bell does.
+     *
+     * The whole list at once rather than per row: the badge exists to say "there
+     * is something here you have not looked at", and once the panel is open the
+     * user is looking at it. A per-row read would make the badge count taps
+     * instead of unread things, and leave it standing over a panel just read.
+     *
+     * The write is fire-and-forget. The badge is already gone from the state
+     * update, and a failed persist only means the notice shows as unread again
+     * next launch — the harmless direction to fail in.
+     */
+    const markNoticesRead = () => {
+        if (notices === null || notices.every((notice) => notice.read)) return;
+
+        const read = notices.map((notice) => ({ ...notice, read: true }));
+        setNotices(read);
+        void saveNotices(read).catch(() => {});
     };
 
     /**
@@ -785,9 +922,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 syncPending,
                 localReports,
                 notificationsEnabled,
+                notices,
                 completeOnboarding,
                 skipOnboarding,
+                updateHealthProfile,
                 setNotificationsEnabled,
+                markNoticesRead,
                 addMedicine,
                 addFamilyMember,
                 addLocalReport,

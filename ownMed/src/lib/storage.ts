@@ -7,6 +7,7 @@ import type {
     UserProfile,
 } from "@/components/dashboard/types";
 
+import { BLOOD_GROUPS } from "./health";
 import {
     ALL_DAYS,
     isValidDateString,
@@ -43,18 +44,56 @@ const KEYS = {
     // rather than an account one: it governs what *this phone* rings for, and a
     // second device signed into the same account keeps its own answer.
     notificationsEnabled: "ownmed.notificationsEnabled",
+    // Notices shown behind the dashboard bell — an app update, and whatever
+    // else is added later. Versioned up front like `onboarded`, because this one
+    // is expected to grow a second and third `kind` and the shape will move with
+    // them. Device-local by design: "read" is a fact about what this person has
+    // seen on this phone, so it belongs here rather than on the account.
+    notices: "ownmed.notices.v1",
 } as const;
 
 // TODO(security): move tokens to expo-secure-store. AsyncStorage is unencrypted
 // and readable by other code on a rooted/jailbroken device; a health app should
 // keep JWTs in the OS keychain/keystore instead.
 
+/**
+ * What onboarding asks about the user's body, and what the dashboard's Overview
+ * is built from.
+ *
+ * Every field is a string, `""` meaning "not recorded" — the same convention the
+ * whole app uses on the wire. The user may skip the health step entirely, so a
+ * profile whose fields are all blank is a real state rather than an empty one.
+ */
 export type HealthProfile = {
     weightKg: string;
-    bloodPressureSys: string;
-    bloodPressureDia: string;
     heightCm: string;
-    gender: "male" | "female" | "";
+    /** A label from `BLOOD_GROUPS` in `lib/health.ts`, or "". */
+    bloodGroup: string;
+    gender: HealthProfileGender;
+};
+
+/**
+ * The two genders this profile records — narrower than the account's list, which
+ * also offers "other". Kept as a value list as well as a type so the clamp in
+ * `normalizeHealthProfile` cannot drift from the type it is producing.
+ */
+const PROFILE_GENDERS = ["male", "female"] as const;
+
+export type HealthProfileGender = (typeof PROFILE_GENDERS)[number] | "";
+
+/**
+ * The profile with nothing answered — what the health form starts from.
+ *
+ * Exported rather than written out at each call site so "all four fields blank"
+ * has one spelling. Both callers need it for the same reason: the onboarding
+ * step can be skipped entirely and the Overview's edit modal opens on a guest
+ * who has never answered, so `healthProfile` is legitimately null in both.
+ */
+export const BLANK_HEALTH_PROFILE: HealthProfile = {
+    weightKg: "",
+    heightCm: "",
+    bloodGroup: "",
+    gender: "",
 };
 
 export async function loadOnboarded(): Promise<boolean> {
@@ -83,9 +122,52 @@ export async function saveNotificationsEnabled(value: boolean): Promise<void> {
     await AsyncStorage.setItem(KEYS.notificationsEnabled, String(value));
 }
 
+/**
+ * Coerce a stored record into the current `HealthProfile` shape.
+ *
+ * Returns null only for something that is not a record at all. A record with
+ * every field blank is kept, so a non-null profile means "onboarding has run",
+ * not "the user answered" — the Overview needs to tell those apart to show its
+ * empty state rather than an empty gauge.
+ *
+ * `gender` and `bloodGroup` are **clamped to known values**, for the same reason
+ * `normalizeMedicine` clamps `mealTiming`: an unrecognized value would be sent
+ * back to a server that rejects it, and because the sync payload validates as a
+ * whole, one bad blood group would fail an entire push rather than its own row.
+ *
+ * The `bloodPressureSys`/`bloodPressureDia` keys an older build wrote are simply
+ * **dropped**. The questions they answered are no longer asked and no screen
+ * shows them, so there is nothing to carry forward — hoisting them into a field
+ * that does not exist would only preserve data nothing can read.
+ *
+ * Exported so the storage boundary is testable without AsyncStorage.
+ */
+export function normalizeHealthProfile(raw: unknown): HealthProfile | null {
+    if (typeof raw !== "object" || raw === null) return null;
+    const record = raw as Record<string, unknown>;
+    const text = (value: unknown) => (typeof value === "string" ? value : "");
+
+    return {
+        weightKg: text(record.weightKg),
+        heightCm: text(record.heightCm),
+        bloodGroup:
+            BLOOD_GROUPS.find((group) => group === record.bloodGroup) ?? "",
+        gender:
+            PROFILE_GENDERS.find((gender) => gender === record.gender) ?? "",
+    };
+}
+
 export async function loadHealthProfile(): Promise<HealthProfile | null> {
     const raw = await AsyncStorage.getItem(KEYS.healthProfile);
-    return raw ? (JSON.parse(raw) as HealthProfile) : null;
+    if (!raw) return null;
+    try {
+        return normalizeHealthProfile(JSON.parse(raw));
+    } catch {
+        // Unreadable storage reads as "never asked". The alternative is a throw
+        // out of the hydration `Promise.all`, which would leave every *other*
+        // thing on the device unloaded over one corrupt profile.
+        return null;
+    }
 }
 
 export async function saveHealthProfile(
@@ -294,6 +376,89 @@ export async function saveFamilyMembers(
     members: FamilyMember[],
 ): Promise<void> {
     await AsyncStorage.setItem(KEYS.familyMembers, JSON.stringify(members));
+}
+
+/** The notice kinds this build knows how to render; see `normalizeNotice`. */
+const NOTICE_KIND_VALUES = ["update"] as const;
+
+/**
+ * Something worth telling the user about, shown behind the dashboard bell.
+ *
+ * `kind` is a closed union rather than a free string because it is what the row
+ * renders *by* — a notice of an unknown kind has no presentation, so there would
+ * be nothing to draw and no way to keep `version`/`storeUrl` from being read as
+ * something they are not. `id` is stable per notice (an update uses one fixed
+ * id) so re-reconciling the same notice updates it rather than stacking copies.
+ */
+export type AppNotice = {
+    id: string;
+    kind: "update";
+    /** For an update: the version being announced. `""` when not versioned. */
+    version: string;
+    title: string;
+    body: string;
+    /** Where tapping the notice leads. `""` means it has no tap target. */
+    storeUrl: string;
+    read: boolean;
+};
+
+/**
+ * Coerce a stored record into the current `AppNotice` shape.
+ *
+ * Follows `normalizeMedicine`: AsyncStorage holds whatever an older build wrote
+ * and there is no schema version to key off. Unlike the domain records, an
+ * unknown `kind` is **dropped rather than salvaged** — it comes from a newer
+ * build, and a notice whose kind this build cannot render is one it has no
+ * honest way to show. Dropping it costs the user nothing they could have acted
+ * on; rendering it as a blank row would cost them a confusing one.
+ *
+ * `read` is only ever `true` when explicitly stored as such, so a value that
+ * failed to write reads as unread — the safe direction, since the alternative is
+ * a notification silently marked seen that the user never saw.
+ *
+ * Exported so the storage boundary is testable without AsyncStorage.
+ */
+export function normalizeNotice(raw: unknown): AppNotice | null {
+    if (typeof raw !== "object" || raw === null) return null;
+    const record = raw as Record<string, unknown>;
+    if (typeof record.id !== "string" || record.id === "") return null;
+
+    const kind = record.kind;
+    if (
+        typeof kind !== "string" ||
+        !(NOTICE_KIND_VALUES as readonly string[]).includes(kind)
+    ) {
+        return null;
+    }
+
+    return {
+        id: record.id,
+        kind: kind as AppNotice["kind"],
+        version: typeof record.version === "string" ? record.version : "",
+        title: typeof record.title === "string" ? record.title : "",
+        body: typeof record.body === "string" ? record.body : "",
+        storeUrl: typeof record.storeUrl === "string" ? record.storeUrl : "",
+        read: record.read === true,
+    };
+}
+
+export async function loadNotices(): Promise<AppNotice[]> {
+    const raw = await AsyncStorage.getItem(KEYS.notices);
+    if (!raw) return [];
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        // Per-record tolerance: one unreadable entry must not discard the rest.
+        return parsed
+            .map(normalizeNotice)
+            .filter((notice): notice is AppNotice => notice !== null);
+    } catch {
+        return [];
+    }
+}
+
+export async function saveNotices(notices: AppNotice[]): Promise<void> {
+    await AsyncStorage.setItem(KEYS.notices, JSON.stringify(notices));
 }
 
 /** The categories a stored report may carry; see `normalizeLocalReport`. */
