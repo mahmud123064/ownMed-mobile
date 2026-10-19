@@ -17,11 +17,13 @@ import { sendPasswordResetEmail } from "../utils/email.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import {
   changePasswordLimiter,
+  deleteAccountLimiter,
   loginLimiter,
   passwordResetConfirmLimiter,
   passwordResetRequestLimiter,
   registerLimiter,
 } from "../utils/rateLimit.js";
+import { deleteUserObjects } from "../utils/r2.js";
 import { generateUniqueShareId } from "../utils/shareId.js";
 // The blood groups are shared with the health profile's validator, and the
 // calendar-date schema with `dateOfBirth` below — so `sync.ts` is where both
@@ -104,6 +106,15 @@ const changePasswordSchema = z.object({
     .string()
     .min(6, "Password must be at least 6 characters")
     .max(200),
+});
+
+/**
+ * Account deletion confirms the password even though the caller already holds a
+ * session: a phone left open on the dashboard should not be enough to erase the
+ * account. The route is rate-limited separately for the same reason.
+ */
+const deleteAccountSchema = z.object({
+  password: z.string().min(1, "Password is required"),
 });
 
 const genderValues = ["male", "female", "other", ""] as const;
@@ -357,6 +368,55 @@ authRouter.post(
     await db.delete(refreshTokens).where(eq(refreshTokens.userId, user.id));
 
     res.json({ message: "Password updated" });
+  }),
+);
+
+/**
+ * Delete the signed-in account and everything it owns.
+ *
+ * One `delete from users` is the whole operation: every domain table declares
+ * `onDelete: "cascade"` on its `user_id`, so medicines, family members, the
+ * health profile, refresh tokens, reset tokens and report rows go with it. The
+ * storage sweep runs afterwards because the rows are the only thing pointing at
+ * those objects, and it is best-effort by design (see `deleteUserObjects`) —
+ * once the account is gone, a leftover object is an operational cleanup, not a
+ * reason to tell the user the deletion failed.
+ *
+ * The access token stays technically valid until it expires (a JWT has nothing
+ * to revoke), but there is no user row behind it any more: `/auth/me` answers
+ * 404 and every write fails its foreign key. The refresh tokens are gone, so
+ * the session cannot be renewed.
+ */
+authRouter.delete(
+  "/me",
+  authenticate,
+  deleteAccountLimiter,
+  asyncHandler(async (req, res) => {
+    const { password } = validate(deleteAccountSchema, req.body);
+
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, req.user!.id))
+      .limit(1);
+    if (!user) {
+      throw ApiError.notFound("User not found");
+    }
+
+    // A null hash is an account with no password (reserved for future
+    // password-less sign-in) — there is nothing to confirm, so the session is
+    // the only credential it ever had.
+    if (
+      user.passwordHash &&
+      !(await verifyPassword(password, user.passwordHash))
+    ) {
+      throw ApiError.unauthorized("Password is incorrect");
+    }
+
+    await db.delete(users).where(eq(users.id, user.id));
+    await deleteUserObjects(user.id);
+
+    res.status(204).end();
   }),
 );
 

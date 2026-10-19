@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // The test tree sits beside `src/`, so the build's `rootDir: "src"` would
+    // reject it. Nothing is emitted here — `npm run typecheck` runs this file
+    // after the build config purely to check the tests.
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -162,5 +163,53 @@ export async function deleteObject(key: string): Promise<void> {
     );
   } catch (error) {
     console.error("[r2] failed to delete object", key, error);
+  }
+}
+
+/**
+ * Best-effort removal of every object a user owns.
+ *
+ * Used when an account is deleted: the `reports` rows cascade with the user, so
+ * nothing in the database still points at these objects, but leaving them in the
+ * bucket would keep a deleted person's medical documents readable by whoever
+ * held the key — and the key is derivable from the user id. Deleting the rows
+ * first and sweeping storage afterwards keeps the account gone even if storage
+ * is briefly unreachable.
+ *
+ * Like `deleteObject`, this never throws: account deletion must not fail because
+ * storage did. An unconfigured bucket means there is nothing this API ever
+ * stored for the user, so it is a no-op rather than an error.
+ */
+export async function deleteUserObjects(userId: string): Promise<void> {
+  if (!env.r2Configured) return;
+
+  const prefix = storagePrefix(userId);
+  try {
+    let continuationToken: string | undefined;
+    do {
+      const page = await client().send(
+        new ListObjectsV2Command({
+          Bucket: env.r2Bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+
+      const keys = (page.Contents ?? [])
+        .map((object) => object.Key)
+        .filter((key): key is string => typeof key === "string" && key !== "");
+
+      // One at a time: the bucket's batch API has its own size limits and
+      // partial-failure semantics, and this runs once per deleted account, not
+      // on any interactive path.
+      for (const key of keys) {
+        await deleteObject(key);
+      }
+
+      continuationToken =
+        page.IsTruncated === true ? page.NextContinuationToken : undefined;
+    } while (continuationToken !== undefined);
+  } catch (error) {
+    console.error("[r2] failed to delete objects for user", userId, error);
   }
 }

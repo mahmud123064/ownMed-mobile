@@ -6,10 +6,18 @@ OwnMed backend API — Express 5 + TypeScript on Neon PostgreSQL.
 npm run dev        # tsx watch — hot reload
 npm run build      # tsc -> dist/
 npm start          # node dist/index.js (run `npm run build` first)
-npm run typecheck  # tsc --noEmit
+npm run typecheck  # source + tests, no emit
+npm test           # vitest run — integration suite against Postgres
+npm run test:watch # vitest in watch mode
 ```
 
-There is no test runner wired up yet. Changes are verified against a running server instead: start `npm run dev` and drive the real routes with `fetch` from a throwaway `.mjs` script in a temp directory — register a throwaway account, push through `/sync`, and assert on the response. This is worth doing for any schema or validation change, because the API's failure mode is quiet: the sync payload validates as a whole, so one malformed row 400s an entire push rather than that one row. Beware that this writes rows owned by the throwaway account into whatever database `DATABASE_URL` points at, and medicines and family members have no delete path to clean them up with (reports do — `DELETE /reports/:id`).
+The suite is in `test/`, one file per Phase 9 area: `auth`, `api`, `database`, `reports` (file upload), `multiple-files`, `authorization`, `sync` (guest synchronization) and `account-deletion`. It drives the real Express `app` through supertest — no second app, no mocked database — because the API's failure mode is quiet: the sync payload validates as a whole, so one malformed row 400s an entire push rather than that one row.
+
+`test/setup.ts` runs before each file and sets `NODE_ENV=test` and `TRUST_PROXY=true` before `src/config/env.ts` freezes them at import (that is why it must be a setup file, not a `beforeAll`). Trusting one proxy hop plus a unique `X-Forwarded-For` per test in `test/helpers.ts` gives every test its own rate-limit bucket; tests that exercise a limiter deliberately share one address. Rate-limit stores are in-memory and per test file, so a file cannot spend another's budget.
+
+The target is `TEST_DATABASE_URL`, falling back to `DATABASE_URL`. Either way the suites only create `*@ownmed.test` accounts, every child table cascades from `users`, and `afterAll` deletes them again — including after a failure, and a crashed run is cleaned up at the start of the next. Object deletion in R2 is mocked in the report and account-deletion suites so no bucket request is made. Password-reset email is mocked too, which is also how the confirm tests obtain the code.
+
+There is no Docker or local Postgres here, so the database must be reachable and migrated (`npm run db:migrate`) — `setup.ts` fails with that instruction rather than letting every test fail on a missing table. `NODE_ENV=production` is refused outright.
 
 ## Layout
 
@@ -121,6 +129,7 @@ Routes live under `/auth`:
 - `GET /auth/me` — authenticated; returns the current user.
 - `PATCH /auth/me` — authenticated; accepts `{ name?, phone?, gender?, bloodGroup?, dateOfBirth? }` and returns `{ user }`. Email is deliberately **not** accepted: changing it is an identity change that needs re-verification, not a profile edit.
 - `POST /auth/change-password` — authenticated; `{ currentPassword, newPassword }` (min 6) → `{ message }`. Requires the current password even though the caller is already signed in: a session left open on a shared phone should not be enough to lock the owner out of their own account. On success it rehashes and **deletes every `refresh_tokens` row for the user**, so other sessions stop renewing.
+- `DELETE /auth/me` — authenticated; `{ password }` → **204**. Confirms the password for the same reason `change-password` does, then one `delete from users` removes the account: every child table cascades (medicines, family members, health profile, refresh tokens, reset tokens, report rows). `deleteUserObjects(userId)` then sweeps `reports/<userId>/` in R2, best-effort — the rows are gone either way, so a storage failure must not turn a successful deletion into an error. The share code dies with the account. An access token still verifies until it expires, but the row behind it is gone: `/auth/me` answers 404 and writes fail the foreign key. Its own rate limiter (`deleteAccountLimiter`) keeps wrong-password guesses from spending the login budget. A password-less account (null `password_hash`, reserved for future password-less sign-in) has nothing to confirm.
 - `POST /auth/password-reset/request` — `{ email }` → emails a 6-digit code via Resend; always returns a generic 200 to avoid email enumeration.
 - `POST /auth/password-reset/confirm` — `{ email, code, newPassword }` → verifies the code, sets the new password, and revokes every refresh token. The code is capped at **5 wrong attempts** via `password_reset_tokens.attempts`: each mismatch increments the counter and the 5th deletes the row, forcing a fresh request. The lookup is by `userId`, not by code hash — counting failures requires finding the row, and `/request` already deletes any previous code, so there is exactly one. An unknown email therefore touches nothing and returns the same generic `Invalid or expired reset code`.
 
@@ -243,7 +252,7 @@ Two env vars behind it and **no table**: `LATEST_APP_VERSION` and `STORE_URL`. T
 
 ## Not built yet
 
-Remaining work: per-resource CRUD (health profiles, medicines, family members) and an **update** path — there is still no way to modify a medicine once it exists, which is why `recoverFromLocal` on the client has to repair blank schedules locally: the server has no way to be told. Deletes exist only for `reports` (see above); medicines and family members remain append-only. Prescription *reading* is stubbed on the client (`src/lib/prescription.ts` throws) and has no server side at all. Report storage is no longer unexercised: with real `R2_*` credentials in place it has been driven from the app end-to-end, so the S3 client, the presigns and the `storageKey` prefix check are known-good rather than merely written. A deployment without those keys is still a valid state — the routes answer 503 and nothing else is affected — which is where a fresh clone starts.
+Remaining work: per-resource CRUD (health profiles, medicines, family members) and an **update** path — there is still no way to modify a medicine once it exists, which is why `recoverFromLocal` on the client has to repair blank schedules locally: the server has no way to be told. Deletes exist only for `reports`, `users` (`DELETE /auth/me`) and their cascades; individual medicines and family members remain append-only. Prescription *reading* is stubbed on the client (`src/lib/prescription.ts` throws) and has no server side at all. Report storage is no longer unexercised: with real `R2_*` credentials in place it has been driven from the app end-to-end, so the S3 client, the presigns and the `storageKey` prefix check are known-good rather than merely written. A deployment without those keys is still a valid state — the routes answer 503 and nothing else is affected — which is where a fresh clone starts.
 
 The client renews its own tokens now: `src/lib/api.ts` retries an authenticated 401 once against `/auth/refresh`, single-flight so concurrent 401s share one rotation. What is still missing is a background re-sync — nothing retries a failed sync while the app is closed.
 

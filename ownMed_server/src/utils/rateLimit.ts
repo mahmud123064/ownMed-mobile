@@ -54,6 +54,16 @@ export const changePasswordLimiter = createLimiter({
   message: "Too many password attempts. Try again in a few minutes.",
 });
 
+/**
+ * Account deletion. Its own bucket, like the other password surfaces: a wrong
+ * password here should not spend the login budget, and repeated guesses are
+ * exactly what this route has to bound.
+ */
+export const deleteAccountLimiter = createLimiter({
+  limit: 10,
+  message: "Too many account deletion attempts. Try again in a few minutes.",
+});
+
 export const registerLimiter = createLimiter({
   windowMs: 60 * 60 * 1000,
   limit: 5,
