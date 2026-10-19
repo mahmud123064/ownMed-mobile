@@ -1,20 +1,17 @@
-import { useState } from "react";
 import { router } from "expo-router";
 import {
     Bell,
     ChevronRight,
-    Languages,
     RefreshCw,
     SunMoon,
     User,
-    Volume2,
     type LucideIcon,
 } from "lucide-react-native";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAppData } from "@/context/AppDataContext";
-import { remindersSupported, scheduleTestReminder } from "@/lib/notifications";
+import { remindersSupported } from "@/lib/notifications";
 import { brand, useAppTheme } from "@/theme";
 
 type SettingItem = {
@@ -29,15 +26,15 @@ export default function SettingsScreen() {
     const { isDark, colors, toggleColorScheme } = useAppTheme();
     const { hydrated, authUser, notificationsEnabled, setNotificationsEnabled } =
         useAppData();
-    const [language, setLanguage] = useState<"English" | "Bangla">("English");
 
     /**
-     * Only a guest sees this row. Syncing is not an action of its own here —
-     * it happens as part of signing in, where the local snapshot is pushed to
-     * `/sync` — so it exists to take a guest to that screen. A signed-in user
-     * is already synced, and would gain nothing from it.
+     * Only a guest sees the synchronise button at the bottom. Syncing is not an
+     * action of its own here — it happens as part of signing in, where the local
+     * snapshot is pushed to `/sync` — so the button exists to take a guest to
+     * that screen. A signed-in user is already synced, and would gain nothing
+     * from it.
      *
-     * Gated on `hydrated` too, so a remembered session doesn't flash the row
+     * Gated on `hydrated` too, so a remembered session doesn't flash the button
      * during the moment before `authUser` is read back from storage.
      */
     const showSync = hydrated && !authUser;
@@ -46,41 +43,19 @@ export default function SettingsScreen() {
     // than inside the row where it would be easy to mistake for state.
     const supportsReminders = remindersSupported();
 
-    /**
-     * Development only: post one reminder five seconds from now, so a new voice
-     * clip can be heard without waiting for a real dose time. See
-     * `scheduleTestReminder` for why it reports its outcome instead of
-     * swallowing it, and why a channel that already has a sound may ignore a
-     * replacement clip.
-     *
-     * The alert is the whole interface. A test that only worked, or only failed,
-     * silently would be indistinguishable from the button not being wired up.
-     */
-    const testReminderSound = () => {
-        void scheduleTestReminder().then((result) => {
-            Alert.alert(
-                result.scheduled
-                    ? "Test reminder scheduled"
-                    : "Test reminder failed",
-                result.scheduled
-                    ? "It will arrive in a few seconds. Leave the app to hear it the way a real reminder arrives."
-                    : result.reason,
-            );
-        });
-    };
-
     const items: SettingItem[] = [
-        { id: "profile", icon: User, label: "Profile" },
-        ...(showSync
-            ? [
-                  {
-                      id: "sync",
-                      icon: RefreshCw,
-                      label: "Synchronise",
-                      onPress: () => router.navigate("/sign-in"),
-                  },
-              ]
-            : []),
+        {
+            id: "profile",
+            icon: User,
+            label: "Profile",
+            // The profile page is the dashboard's `profile` section, not a
+            // route of its own (see `sections.ts`), so this opens it there.
+            onPress: () =>
+                router.navigate({
+                    pathname: "/dashboard",
+                    params: { section: "profile" },
+                }),
+        },
         {
             id: "theme",
             icon: SunMoon,
@@ -89,10 +64,10 @@ export default function SettingsScreen() {
             onPress: toggleColorScheme,
         },
         // The master switch for medicine reminders. It reads as a value row like
-        // Theme and Language rather than a `Switch`, because a row that both
-        // states its value and is tappable anywhere is the same shape the rest of
-        // this list already uses — one gesture, one target, no small control to
-        // hit. Off cancels every scheduled dose; see `syncMedicineReminders`.
+        // Theme rather than a `Switch`, because a row that both states its value
+        // and is tappable anywhere is the same shape the rest of this list
+        // already uses — one gesture, one target, no small control to hit. Off
+        // cancels every scheduled dose; see `syncMedicineReminders`.
         //
         // "Unavailable" is a real state and not a placeholder: Expo Go on
         // Android cannot load the notifications module at all, so the honest
@@ -110,39 +85,6 @@ export default function SettingsScreen() {
                 ? () => setNotificationsEnabled(!notificationsEnabled)
                 : undefined,
         },
-        // Development only, and deliberately *not* gated on `supportsReminders`
-        // the way the row above is: the state most worth being able to poke at
-        // is the one where reminders cannot load at all, so tapping this has to
-        // report the reason rather than the row quietly not being there.
-        ...(__DEV__
-            ? [
-                  {
-                      id: "test-sound",
-                      icon: Volume2,
-                      label: "Test reminder sound",
-                      // Sits where the other rows state their value, so it reads
-                      // as a dev tool rather than a real preference.
-                      value: "Dev only",
-                      onPress: testReminderSound,
-                  },
-              ]
-            : []),
-        {
-            id: "language",
-            icon: Languages,
-            label: "Language",
-            value: language,
-            onPress: () =>
-                setLanguage((prev) =>
-                    prev === "English" ? "Bangla" : "English",
-                ),
-        },
-        // {
-        //   id: 'signin',
-        //   icon: LogIn,
-        //   label: 'Sign In',
-        //   onPress: () => router.navigate('/sign-in'),
-        // },
     ];
 
     return (
@@ -230,7 +172,46 @@ export default function SettingsScreen() {
                             );
                         })}
                     </View>
+
+                    {/* "Unavailable" is a real state and not a placeholder:
+                        Expo Go on Android cannot load the notifications module.
+                        Saying so here keeps the row from reading as a broken
+                        toggle — reminders work in any real build of the app. */}
+                    {!supportsReminders ? (
+                        <Text className="mt-3 px-1 text-xs font-sans text-muted">
+                            Add Medicine to get reminders. 
+                        </Text>
+                    ) : null}
                 </View>
+
+                {/* A guest's data is on this device only until they sign in, so
+                    the action that fixes that gets a full-width primary button
+                    rather than a row in the list above. */}
+                {showSync ? (
+                    <View className="px-6 pt-8">
+                        <Pressable
+                            onPress={() => router.navigate("/sign-in")}
+                            android_ripple={{
+                                color: "rgba(255,255,255,0.14)",
+                            }}
+                            accessibilityRole="button"
+                            className="flex-row items-center justify-center gap-2 rounded-2xl bg-brand-600 py-4"
+                        >
+                            <RefreshCw
+                                color="#ffffff"
+                                size={18}
+                                strokeWidth={2.5}
+                            />
+                            <Text className="text-base font-semibold text-white">
+                                Synchronise
+                            </Text>
+                        </Pressable>
+                        <Text className="mt-2 text-center text-xs font-sans text-muted">
+                            Sign in to back up your medicines and family details
+                            to your account, so they’re safe on a new phone.
+                        </Text>
+                    </View>
+                ) : null}
             </ScrollView>
         </SafeAreaView>
     );

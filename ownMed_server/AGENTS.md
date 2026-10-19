@@ -69,6 +69,41 @@ All config lives in `.env` (gitignored); `.env.example` documents every key. `sr
 
 `RESEND_*` and `R2_*` are the two **optional groups**: the server boots without either, and only the routes that need them fail, with a clean 503 rather than a crash. `env.r2Configured` is the derived boolean — true only when all four of the first `R2_*` keys are non-empty, so a half-filled config is treated as none rather than booting an S3 client that fails on first upload. Both are built lazily for the same reason (`utils/email.ts`, `utils/r2.ts`): constructing `new Resend("")` or an S3 client with empty credentials throws at module load, which would take the whole process down before the key was ever read.
 
+## Deployment (production)
+
+The API runs as a long-lived Node process behind a TLS-terminating reverse proxy (Render, Fly, Railway, a VPS + nginx, …). There is no Dockerfile or host config in the repo; the contract is the commands plus the environment below.
+
+```bash
+npm ci
+npm run build            # tsc -> dist/
+npm run db:migrate       # against the production DATABASE_URL
+NODE_ENV=production npm start
+```
+
+Production environment checklist:
+
+| Variable | Value | Why it matters |
+| --- | --- | --- |
+| `NODE_ENV` | `production` | hides stack traces and switches CORS to the allowlist |
+| `TRUST_PROXY` | `true` **only behind a real proxy** | the limiters read `X-Forwarded-For`; set it with no proxy in front and clients can forge their own IP and skip every bucket |
+| `DATABASE_URL` | Neon **pooled** string with `?sslmode=require` | see "Neon gotchas" for the path mistake that silently connects to the wrong database |
+| `JWT_SECRET` | 48 random bytes, hex | required at boot; generate with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
+| `R2_*` | all four | `/reports` answers 503 without them |
+| `RESEND_API_KEY` / `RESEND_FROM` | real key, verified sender | password reset sends no code without it |
+| `CORS_ORIGINS` | comma-separated browser origins | native clients send no `Origin`; empty denies cross-origin web clients |
+| `LATEST_APP_VERSION` / `STORE_URL` | released version / Play listing URL | drives the in-app update notice; empty is a valid pre-release state |
+
+Operational properties to preserve:
+
+- **One process.** Rate-limit stores are in-memory, so two replicas behind a load balancer each count separately and both under-count. Move the store to Redis before scaling horizontally.
+- **TLS is the proxy's job.** Helmet already sends HSTS; never expose this process on plain HTTP to the internet. The app's release build refuses cleartext HTTP, so the deployed API must be `https://`.
+- **`/health` is the liveness check.** The pool connects lazily and the server boots without Postgres; `/health` reports the real state (`connected` / `disconnected`) instead of crashing. Keep that property when adding checks.
+- **Optional groups stay optional.** No `R2_*` → boots, reports 503. No `RESEND_*` → boots, password reset emails do nothing.
+- **Migrations are an explicit release step.** `npm run db:migrate`; the server never runs them on boot, so a bad deploy cannot half-migrate by accident.
+- **Never point a test run at production.** `test/setup.ts` refuses `NODE_ENV=production` outright for exactly this reason.
+
+The Play release checklist (deployed URL, privacy policy, deletion URL, Data Safety) lives in `ownMed/AGENTS.md` under "Google Play release".
+
 ## Error handling
 
 Throw `ApiError` from handlers; anything else is treated as an unexpected bug.

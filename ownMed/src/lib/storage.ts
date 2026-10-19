@@ -1,4 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 import type {
     FamilyMember,
@@ -52,9 +54,13 @@ const KEYS = {
     notices: "ownmed.notices.v1",
 } as const;
 
-// TODO(security): move tokens to expo-secure-store. AsyncStorage is unencrypted
-// and readable by other code on a rooted/jailbroken device; a health app should
-// keep JWTs in the OS keychain/keystore instead.
+// Auth tokens are the one thing on this device that is a *credential*, so they
+// live in the OS keychain/keystore rather than in AsyncStorage, which is plain
+// files readable by anything on a rooted device. The AsyncStorage key remains as
+// the legacy location (and the only one on web, where SecureStore does not
+// exist) so a session saved by an older build is moved rather than dropped.
+const SECURE_AUTH_TOKENS_KEY = "ownmed.authTokens";
+const secureStoreAvailable = Platform.OS !== "web";
 
 /**
  * What onboarding asks about the user's body, and what the dashboard's Overview
@@ -171,9 +177,34 @@ export async function loadHealthProfile(): Promise<HealthProfile | null> {
 }
 
 export async function saveHealthProfile(
-    profile: HealthProfile,
+    profile: HealthProfile | null,
 ): Promise<void> {
+    if (profile === null) {
+        await AsyncStorage.removeItem(KEYS.healthProfile);
+        return;
+    }
     await AsyncStorage.setItem(KEYS.healthProfile, JSON.stringify(profile));
+}
+
+/**
+ * Remove the account-bound cache after the account itself has been deleted.
+ *
+ * The device copy is normally a cache of the account, so it is kept on an
+ * ordinary sign-out (anything that never reached the server would otherwise be
+ * lost). Deletion is different: the server rows are gone for good, and leaving
+ * them here would push a deleted user's medicines into the next account that
+ * signs in on this phone. Device preferences — onboarding, reminders, notices —
+ * are not account data and stay.
+ */
+export async function clearAccountData(): Promise<void> {
+    await AsyncStorage.multiRemove([
+        KEYS.healthProfile,
+        KEYS.medicines,
+        KEYS.familyMembers,
+        KEYS.localReports,
+        KEYS.familyLink,
+        KEYS.syncPending,
+    ]);
 }
 
 export async function loadAuthUser(): Promise<UserProfile | null> {
@@ -194,16 +225,86 @@ export type AuthTokens = {
     refreshToken: string;
 };
 
+/**
+ * A stored token pair, or null when the value is not one.
+ *
+ * Written defensively because the legacy copy may predate any shape guarantee:
+ * a half-written record must read as "signed out" rather than reach `lib/api`
+ * as an object with undefined tokens.
+ */
+function parseAuthTokens(raw: string): AuthTokens | null {
+    try {
+        const parsed = JSON.parse(raw) as Partial<AuthTokens>;
+        if (
+            typeof parsed.accessToken !== "string" ||
+            typeof parsed.refreshToken !== "string"
+        ) {
+            return null;
+        }
+        return {
+            accessToken: parsed.accessToken,
+            refreshToken: parsed.refreshToken,
+        };
+    } catch {
+        return null;
+    }
+}
+
 export async function saveAuthTokens(tokens: AuthTokens): Promise<void> {
-    await AsyncStorage.setItem(KEYS.authTokens, JSON.stringify(tokens));
+    const json = JSON.stringify(tokens);
+
+    if (secureStoreAvailable) {
+        try {
+            await SecureStore.setItemAsync(SECURE_AUTH_TOKENS_KEY, json);
+            // Drop the legacy plaintext copy, if the migration left one behind.
+            await AsyncStorage.removeItem(KEYS.authTokens);
+            return;
+        } catch {
+            // SecureStore can be unavailable (a locked device, a broken
+            // keystore). Falling back keeps the session; refusing to save
+            // would sign the user out on the next launch instead.
+        }
+    }
+
+    await AsyncStorage.setItem(KEYS.authTokens, json);
 }
 
 export async function loadAuthTokens(): Promise<AuthTokens | null> {
+    if (secureStoreAvailable) {
+        try {
+            const secure = await SecureStore.getItemAsync(
+                SECURE_AUTH_TOKENS_KEY,
+            );
+            // A parse failure here is not a reason to give up: the legacy copy
+            // may still hold a usable pair.
+            const parsed = secure === null ? null : parseAuthTokens(secure);
+            if (parsed !== null) return parsed;
+        } catch {
+            // Fall through to the legacy location.
+        }
+    }
+
     const raw = await AsyncStorage.getItem(KEYS.authTokens);
-    return raw ? (JSON.parse(raw) as AuthTokens) : null;
+    if (!raw) return null;
+
+    const tokens = parseAuthTokens(raw);
+    // Move a pair written before this migration into secure storage, so the
+    // plaintext copy does not outlive the first launch on the new build.
+    if (tokens !== null && secureStoreAvailable) {
+        await saveAuthTokens(tokens).catch(() => {});
+    }
+    return tokens;
 }
 
 export async function clearAuthTokens(): Promise<void> {
+    if (secureStoreAvailable) {
+        try {
+            await SecureStore.deleteItemAsync(SECURE_AUTH_TOKENS_KEY);
+        } catch {
+            // Nothing to do: the legacy `removeItem` below still runs, and a
+            // failed secure delete must not block signing out.
+        }
+    }
     await AsyncStorage.removeItem(KEYS.authTokens);
 }
 

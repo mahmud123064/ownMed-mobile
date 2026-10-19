@@ -44,6 +44,7 @@ import {
     type PickedReportFile,
 } from "@/lib/reports";
 import {
+    clearAccountData,
     clearAuthTokens,
     loadAuthTokens,
     loadAuthUser,
@@ -171,6 +172,11 @@ type AppData = {
     updateProfile: (input: UpdateProfileInput) => Promise<void>;
     /** Change the account's password. Throws when signed out. */
     changePassword: (input: ChangePasswordInput) => Promise<void>;
+    /**
+     * Delete the account and everything stored with it. Throws when signed out
+     * or when the confirmation password is wrong.
+     */
+    deleteAccount: (password: string) => Promise<void>;
     register: (input: RegisterInput) => Promise<void>;
     signIn: (input: LoginInput, rememberMe: boolean) => Promise<void>;
     requestPasswordReset: (input: PasswordResetRequestInput) => Promise<void>;
@@ -909,6 +915,50 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         await Promise.all([saveAuthUser(null), clearAuthTokens()]);
     };
 
+    /**
+     * Delete the account, then erase this device's copy of it.
+     *
+     * The server call goes first and deliberately is not caught: if it fails —
+     * a wrong password, a dropped connection — nothing local is touched and the
+     * user still has their account. Once it succeeds the rows are gone for good,
+     * so the cache goes too, unlike an ordinary sign-out which keeps it. What is
+     * *not* deleted: onboarding state, the reminders preference and notice read
+     * state, which describe this phone rather than the account.
+     */
+    const deleteAccount = async (password: string) => {
+        if (!authUser) {
+            throw new Error("Sign in to delete your account.");
+        }
+
+        await api.deleteAccount(password);
+
+        // Report files are device copies that the server never saw (any that
+        // did were swept from storage server-side), so they are removed here
+        // rather than by the cascade.
+        for (const report of localReports) {
+            deleteReportFile(report.file.uri);
+            if (report.file.thumbnailUri !== "") {
+                deleteReportFile(report.file.thumbnailUri);
+            }
+        }
+
+        setMedicines([]);
+        setFamilyMembers([]);
+        setHealthProfile(null);
+        setLocalReports([]);
+        setFamilyLink(null);
+        setSyncPending(false);
+        await clearAccountData();
+
+        // Same teardown as `signOut`, minus the logout call: every refresh
+        // token died with the account, and the access token has nothing left
+        // behind it to act on.
+        setAuthUser(null);
+        rememberSession.current = false;
+        setSessionTokens(null);
+        await Promise.all([saveAuthUser(null), clearAuthTokens()]);
+    };
+
     return (
         <AppDataContext.Provider
             value={{
@@ -937,6 +987,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 disconnectFamily,
                 updateProfile,
                 changePassword,
+                deleteAccount,
                 register,
                 signIn,
                 requestPasswordReset,

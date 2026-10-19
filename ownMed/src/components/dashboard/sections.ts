@@ -20,9 +20,6 @@ import Reports from "./sections/Reports";
 // Find Doctor, Find Pharmacy, Find Hospital, and Appointments are intentionally
 // not published in this release. Their components and mock data stay in the
 // codebase so they can be re-enabled later.
-//
-// Prescription upload is not a section of its own: it is the second mode of
-// Add Medicine (`UploadPrescription`), since both are ways to add a medicine.
 export const SECTIONS: Section[] = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
     { id: "profile", label: "Profile", icon: User },

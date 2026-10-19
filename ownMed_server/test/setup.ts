@@ -52,6 +52,36 @@ if (process.env.TEST_DATABASE_URL) {
 
 const TEST_EMAIL_PATTERN = "%@ownmed.test";
 
+/**
+ * Run a database statement, retrying a cold start.
+ *
+ * Neon suspends an idle compute and takes several seconds to wake it. The first
+ * connection in a run can therefore hit pg-pool's 10 s connection timeout even
+ * though the database is healthy — which would fail an entire file before its
+ * first test ran. Retrying turns that into a slower start rather than a failed
+ * suite; a genuine outage still exhausts the attempts and reports the real
+ * cause. `hookTimeout` in `vitest.config.ts` is sized to cover the worst case.
+ */
+async function withDbRetry<T>(
+  label: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const attempts = 3;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run();
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+      console.warn(
+        `[tests] ${label} failed (attempt ${attempt}/${attempts}): ${
+          (error as Error).message
+        } — retrying.`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+    }
+  }
+}
+
 /** Delete every account a test could have created. Cascades handle the rest. */
 async function removeTestAccounts(): Promise<void> {
   const { pool } = await import("../src/db/pool.js");
@@ -62,7 +92,9 @@ beforeAll(async () => {
   const { pool } = await import("../src/db/pool.js");
 
   try {
-    await pool.query("select 1 from users limit 1");
+    await withDbRetry("database check", () =>
+      pool.query("select 1 from users limit 1"),
+    );
   } catch (error) {
     throw new Error(
       "The test database is unreachable or has not been migrated. " +
@@ -72,13 +104,13 @@ beforeAll(async () => {
   }
 
   // Clear anything a previous crashed run left behind.
-  await removeTestAccounts();
+  await withDbRetry("cleanup", removeTestAccounts);
 });
 
 afterAll(async () => {
   const { pool } = await import("../src/db/pool.js");
   try {
-    await removeTestAccounts();
+    await withDbRetry("cleanup", removeTestAccounts);
   } finally {
     await pool.end();
   }

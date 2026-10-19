@@ -16,7 +16,16 @@ import { api, createUserDirect, type TestAccount } from "./helpers.js";
  */
 vi.mock("../src/utils/r2.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/utils/r2.js")>();
-  return { ...actual, deleteObject: vi.fn(async (_key: string) => {}) };
+  return {
+    ...actual,
+    deleteObject: vi.fn(async (_key: string) => {}),
+    // No bytes are PUT in tests; `POST /reports` would otherwise HEAD a key
+    // that does not exist and refuse the row.
+    headObject: vi.fn(async (_key: string) => ({
+      exists: true as const,
+      sizeBytes: 2048,
+    })),
+  };
 });
 
 const r2Ready = env.r2Configured;

@@ -1,11 +1,8 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
-<<<<<<< HEAD
-  ListObjectsV2Command,
-=======
   HeadObjectCommand,
->>>>>>> 366fa86b3dde736b725c81fff035bb8227797cc7
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";

@@ -55,7 +55,7 @@ export const TABS: TabGuide[] = [
     {
         icon: Settings,
         label: "Settings",
-        description: "Theme, language, and reminder preferences.",
+        description: "Theme and reminder preferences.",
     },
     {
         icon: BookOpen,

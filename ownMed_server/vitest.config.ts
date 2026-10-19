@@ -20,7 +20,9 @@ export default defineConfig({
     fileParallelism: false,
     sequence: { concurrent: false },
     testTimeout: 30_000,
-    hookTimeout: 30_000,
+    // Larger than `testTimeout` because the setup/teardown hooks retry a cold
+    // Neon wake-up: three 10 s connection attempts plus backoff.
+    hookTimeout: 90_000,
     // A leaked handle (the pg pool) would otherwise keep the run alive.
     teardownTimeout: 10_000,
   },

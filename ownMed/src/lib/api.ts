@@ -470,6 +470,21 @@ export const api = {
             true,
         ),
     /**
+     * Delete the account and everything stored with it.
+     *
+     * The server confirms the password for the same reason `changePassword`
+     * does — the phone may have been left signed in — and then a single delete
+     * cascades through medicines, family members, health profile, tokens and
+     * report rows, with the uploaded objects swept from storage afterwards.
+     * Irreversible, so the caller asks the user twice.
+     */
+    deleteAccount: (password: string): Promise<void> =>
+        request<void>(
+            "/auth/me",
+            { method: "DELETE", body: JSON.stringify({ password }) },
+            true,
+        ),
+    /**
      * Resolve a Family ID to its owner, without pulling any of their data.
      *
      * Unauthenticated on purpose: a guest who has just installed the app can

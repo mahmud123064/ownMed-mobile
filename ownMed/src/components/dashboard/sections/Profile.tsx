@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { router } from "expo-router";
 import { Controller, useForm } from "react-hook-form";
-import { Droplet, Eye, EyeOff, Lock, Mail, Phone, UserRound } from "lucide-react-native";
+import { Droplet, Eye, EyeOff, Lock, Mail, Phone, Trash2, UserRound } from "lucide-react-native";
 import {
     ActivityIndicator,
     Alert,
@@ -67,12 +67,16 @@ export default function Profile() {
 
 function ProfileForm({ user }: { user: UserProfile }) {
     const { colors } = useAppTheme();
-    const { authUser, updateProfile, changePassword, signOut } = useAppData();
+    const { authUser, updateProfile, changePassword, deleteAccount, signOut } =
+        useAppData();
     const [showCurrent, setShowCurrent] = useState(false);
     const [showNext, setShowNext] = useState(false);
     const [showConfirm, setShowConfirm] = useState(false);
     const [saving, setSaving] = useState(false);
     const [changingPassword, setChangingPassword] = useState(false);
+    const [deletePassword, setDeletePassword] = useState("");
+    const [showDeletePassword, setShowDeletePassword] = useState(false);
+    const [deleting, setDeleting] = useState(false);
 
     const personal = useForm<PersonalInfo>({
         defaultValues: {
@@ -173,6 +177,59 @@ function ProfileForm({ user }: { user: UserProfile }) {
             );
         } finally {
             setChangingPassword(false);
+        }
+    };
+
+    /**
+     * Delete the account. Confirmed twice on purpose — once with the password
+     * typed into the field, then with a destructive alert — because the server
+     * row is gone for good and the action sits one mistap away on a screen the
+     * user came to for something else.
+     */
+    const onDeleteAccount = () => {
+        if (!authUser || deletePassword === "" || deleting) return;
+
+        Alert.alert(
+            "Delete account?",
+            "This permanently deletes your account and everything stored with it. This can’t be undone.",
+            [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: () => void performDelete(),
+                },
+            ],
+        );
+    };
+
+    const performDelete = async () => {
+        setDeleting(true);
+        try {
+            await deleteAccount(deletePassword);
+            setDeletePassword("");
+            Alert.alert(
+                "Account deleted",
+                "Your account and all data stored with it have been deleted.",
+                // Not cancelable: dismissing it would leave the user on a
+                // profile that no longer belongs to anyone.
+                [
+                    {
+                        text: "OK",
+                        onPress: () => router.replace("/sign-in"),
+                    },
+                ],
+                { cancelable: false },
+            );
+        } catch (error) {
+            Alert.alert(
+                "Couldn't delete account",
+                error instanceof Error
+                    ? error.message
+                    : "Something went wrong. Please try again.",
+            );
+        } finally {
+            setDeleting(false);
         }
     };
 
@@ -461,6 +518,72 @@ function ProfileForm({ user }: { user: UserProfile }) {
                         </Text>
                     </Pressable>
                 </View>
+
+                {/* Delete account — kept reachable rather than buried: Google
+                    Play requires an in-app deletion path for any app that lets
+                    people create an account. Hidden from guests, who have no
+                    account to delete. */}
+                {authUser ? (
+                    <>
+                        <Text className="mt-8 text-lg font-semibold text-foreground">
+                            Delete account
+                        </Text>
+                        <View className="mt-3 gap-4">
+                            <Text className="text-sm leading-relaxed font-sans text-muted">
+                                Permanently deletes your account and everything
+                                stored with it — your profile, medicines, family
+                                members, health details and reports. This can’t
+                                be undone.
+                            </Text>
+
+                            <FormField
+                                label="Password"
+                                icon={Lock}
+                                value={deletePassword}
+                                onChangeText={setDeletePassword}
+                                placeholder="Enter your password to confirm"
+                                secureTextEntry={!showDeletePassword}
+                                right={
+                                    <PasswordToggle
+                                        shown={showDeletePassword}
+                                        onPress={() =>
+                                            setShowDeletePassword((v) => !v)
+                                        }
+                                    />
+                                }
+                            />
+
+                            <Pressable
+                                onPress={onDeleteAccount}
+                                disabled={deleting || deletePassword === ""}
+                                accessibilityRole="button"
+                                className={`flex-row items-center justify-center gap-2 rounded-2xl border border-danger py-3.5 ${
+                                    deleting || deletePassword === ""
+                                        ? "opacity-60"
+                                        : ""
+                                }`}
+                            >
+                                {deleting ? (
+                                    <ActivityIndicator
+                                        color="#dc2626"
+                                        size="small"
+                                    />
+                                ) : (
+                                    <Trash2
+                                        color="#dc2626"
+                                        size={18}
+                                        strokeWidth={2}
+                                    />
+                                )}
+                                <Text className="text-base font-semibold text-danger">
+                                    {deleting
+                                        ? "Deleting…"
+                                        : "Delete account"}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    </>
+                ) : null}
             </View>
         </ScrollView>
     );

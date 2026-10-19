@@ -26,10 +26,27 @@ import {
  */
 const r2Mocks = vi.hoisted(() => ({
   deleteObject: vi.fn(async (_key: string) => {}),
+  // `POST /reports` HEADs the object to confirm the upload happened. These
+  // tests never PUT bytes (no bucket writes), so the check is faked as a
+  // successful, in-range upload.
+  // Typed like the real `headObject`, so individual tests can simulate a
+  // missing object (`{ exists: false }`) or an oversized one.
+  headObject: vi.fn(
+    async (
+      _key: string,
+    ): Promise<{ exists: false } | { exists: true; sizeBytes: number }> => ({
+      exists: true,
+      sizeBytes: 2048,
+    }),
+  ),
 }));
 vi.mock("../src/utils/r2.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/utils/r2.js")>();
-  return { ...actual, deleteObject: r2Mocks.deleteObject };
+  return {
+    ...actual,
+    deleteObject: r2Mocks.deleteObject,
+    headObject: r2Mocks.headObject,
+  };
 });
 
 const r2Ready = env.r2Configured;
@@ -260,6 +277,41 @@ describe("reports — recording uploaded files", () => {
     const { res } = await createReport(user, { id, thumbnailKey });
     expect(res.status).toBe(201);
     expect(res.body.report.file.thumbnailKey).toBe(thumbnailKey);
+  });
+
+  it("refuses a row whose object was never uploaded", async () => {
+    const user = await createUserDirect();
+    // The upload is device-to-R2, so a row written after a failed PUT would
+    // point at nothing. The HEAD is the server's only chance to notice.
+    r2Mocks.headObject.mockResolvedValueOnce({ exists: false });
+
+    const { res, id } = await createReport(user);
+    expectApiError(res, 404, "Report file not found");
+
+    const { rows } = await pool.query(
+      "select 1 from reports where id = $1 and user_id = $2",
+      [id, user.id],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it("refuses an object over the cap, whatever size the client claimed", async () => {
+    const user = await createUserDirect();
+    // `sizeBytes` in the body is only the client's claim; storage's real
+    // ContentLength is what the cap is enforced against.
+    r2Mocks.headObject.mockResolvedValueOnce({
+      exists: true,
+      sizeBytes: MAX_SIZE + 1,
+    });
+
+    const { res, id } = await createReport(user, { sizeBytes: 2048 });
+    expectApiError(res, 400, "File too large");
+
+    const { rows } = await pool.query(
+      "select 1 from reports where id = $1 and user_id = $2",
+      [id, user.id],
+    );
+    expect(rows).toHaveLength(0);
   });
 
   it("is idempotent for a retried create", async () => {

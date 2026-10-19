@@ -58,15 +58,6 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="settings"
-        options={{
-          title: 'Settings',
-          tabBarIcon: ({ color, size }) => (
-            <Settings color={color} size={size} strokeWidth={2} />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="how-to-use"
         options={{
           title: 'How to use',
@@ -75,6 +66,16 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          tabBarIcon: ({ color, size }) => (
+            <Settings color={color} size={size} strokeWidth={2} />
+          ),
+        }}
+      />
+      
       {/* Sign-in is reached from the Home header and Settings, so it has no
           dedicated tab of its own. */}
       <Tabs.Screen name="sign-in" options={{ href: null }} />

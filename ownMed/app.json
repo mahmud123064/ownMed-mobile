@@ -19,7 +19,10 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -32,7 +35,8 @@
         "expo-image-picker",
         {
           "photosPermission": "OwnMed needs access to your photos so you can attach a report or prescription image to your records.",
-          "cameraPermission": "OwnMed needs access to your camera so you can photograph a report or prescription to attach to your records."
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
       "@react-native-community/datetimepicker",
@@ -40,9 +44,12 @@
         "expo-notifications",
         {
           "color": "#00a08c",
-          "sounds": ["./assets/reminder.wav"]
+          "sounds": [
+            "./assets/reminder.wav"
+          ]
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true
