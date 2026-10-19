@@ -1,56 +1,18 @@
 import { useState } from "react";
 import {
     HeartPulse,
-    House,
-    LayoutDashboard,
-    LogIn,
-    Settings,
     ShieldCheck,
     User,
-    type LucideIcon,
 } from "lucide-react-native";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 
 import HealthProfileForm from "@/components/ui/HealthProfileForm";
 import { useAppData } from "@/context/AppDataContext";
+import { TABS } from "@/lib/guide";
 import { BLANK_HEALTH_PROFILE, type HealthProfile } from "@/lib/storage";
 import { brand, useAppTheme } from "@/theme";
 
 const TOTAL_STEPS = 3;
-
-type TabGuide = {
-    icon: LucideIcon;
-    label: string;
-    description: string;
-};
-
-const TABS: TabGuide[] = [
-    {
-        icon: House,
-        label: "Home",
-        description: "Your landing page with quick actions.",
-    },
-    {
-        icon: LayoutDashboard,
-        label: "Dashboard",
-        description: "Track medicines, prescriptions, and family health.",
-    },
-    {
-        icon: HeartPulse,
-        label: "Health Tips",
-        description: "Daily wellness tips and advice.",
-    },
-    {
-        icon: Settings,
-        label: "Settings",
-        description: "Theme, language, and preferences.",
-    },
-    {
-        icon: LogIn,
-        label: "Account",
-        description: "Sign in to keep your data safe.",
-    },
-];
 
 function HowToUseStep() {
     return (

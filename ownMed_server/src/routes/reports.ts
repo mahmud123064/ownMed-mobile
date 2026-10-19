@@ -9,6 +9,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   deleteObject,
+  headObject,
   presignDownload,
   presignUpload,
   storageKey,
@@ -214,6 +215,23 @@ reportsRouter.post(
     const thumbnailKey = input.file.thumbnailKey;
     if (thumbnailKey !== "" && !thumbnailKey.startsWith(storagePrefix(userId))) {
       throw ApiError.badRequest("Invalid thumbnail key");
+    }
+
+    // Confirm the bytes are actually in storage before a row claims they are.
+    // The upload happened device-to-R2, so this HEAD is the server's only view
+    // of it — and its `ContentLength` is the real size, where `sizeBytes` in
+    // the body is the client's claim. The preview is left best-effort: a
+    // missing one already renders as a category icon and costs nothing.
+    if (!env.r2Configured) {
+      throw new ApiError(503, "Report storage is not configured");
+    }
+
+    const stored = await headObject(input.file.storageKey);
+    if (!stored.exists) {
+      throw ApiError.notFound("Report file not found");
+    }
+    if (stored.sizeBytes > MAX_SIZE_BYTES) {
+      throw ApiError.badRequest("File too large");
     }
 
     const rows = await db

@@ -14,7 +14,7 @@ There is no test runner wired up yet. Changes are verified against a running ser
 ## Layout
 
 - `src/index.ts` — process entry. Starts the HTTP server and handles `SIGINT`/`SIGTERM` (closes the server, then the pool).
-- `src/app.ts` — the Express app: middleware → routes → `notFound` → `errorHandler`. Import `app` from here rather than building a second one. Also where CORS (`env.corsOrigins` in production, permissive otherwise), the `1mb` JSON body cap, and `trust proxy` are set.
+- `src/app.ts` — the Express app: middleware → routes → `notFound` → `errorHandler`. Import `app` from here rather than building a second one. Also where CORS (`env.corsOrigins` in production, permissive otherwise), Helmet, the `1mb` JSON body cap, and `trust proxy` are set.
 - `src/config/env.ts` — the **only** module that reads `process.env`. Exports a frozen `env`.
 - `src/db/pool.ts` — the shared `pg` `Pool`.
 - `src/db/schema.ts` — Drizzle table definitions + inferred types: the auth tables (`users`, `refreshTokens`, `passwordResetTokens`), the domain tables (`healthProfiles`, `medicines`, `familyMembers`) and `reports` (metadata for files held in R2).
@@ -77,9 +77,23 @@ Wrap async handlers in `asyncHandler` so rejections reach the error middleware (
 
 ## Rate limiting
 
-`src/utils/rateLimit.ts` builds the named limiters from one local `createLimiter` helper: `loginLimiter` (10 / 15 min), `changePasswordLimiter` (10 / 15 min, its own instance so a burst of password changes cannot spend the login budget), `registerLimiter` (5 / hour), `passwordResetRequestLimiter` (5 / 15 min), `passwordResetConfirmLimiter` (10 / 15 min) and `connectLimiter` (20 / 15 min, on `POST /family/connect` only). All of them set `skipSuccessfulRequests`, so only failures count against a bucket, and all return the same `{ error: { message, statusCode: 429 } }` shape `errorHandler` produces, so a throttled client sees one error format rather than two.
+`src/utils/rateLimit.ts` builds the named limiters from one local `createLimiter` helper: `loginLimiter` (10 / 15 min), `changePasswordLimiter` (10 / 15 min, its own instance so a burst of password changes cannot spend the login budget), `registerLimiter` (5 / hour), `passwordResetRequestLimiter` (5 / 15 min), `passwordResetConfirmLimiter` (10 / 15 min), `connectLimiter` (20 / 15 min, on `POST /family/connect`), `familyReadLimiter` (120 / 15 min, on `GET /family/:shareId`) and `familyWriteLimiter` (100 / 15 min, on `POST /family/:shareId`). All return the same `{ error: { message, statusCode: 429 } }` shape `errorHandler` produces, so a throttled client sees one error format rather than two.
+
+By default only **failures** count against a bucket (`skipSuccessfulRequests`), because the surfaces above mostly carry legitimate traffic — a user signing in, asking for a reset code, connecting a family member — and charging for it would lock out normal use long before it inconvenienced an attacker, who by definition fails. `familyWriteLimiter` is the exception and passes `skipSuccessful: false`: the threat there is not guessing but a holder spamming appends into an account that is not theirs, and those requests succeed every time. A blocked request does not reset the count either way, so a determined guesser still runs out.
 
 The store is in-memory and therefore **per-process**: correct for a single instance, and silently under-counting behind a load balancer, where each replica keeps its own buckets. A shared store (Redis) is the fix if this ever runs on more than one process. Behind a reverse proxy the limiter would otherwise see the proxy's IP for every client — set `TRUST_PROXY=true` so it reads the real one.
+
+## Security
+
+**Production must terminate TLS at the proxy and set `TRUST_PROXY=true`.** HTTPS itself is the proxy's job; the app's half is Helmet (`helmet({ contentSecurityPolicy: false })` in `app.ts`), which sends HSTS and the rest of the standard header set. CSP is off deliberately — every response is JSON, so there is no document for a policy to govern.
+
+The rest of the posture, in one place so a later audit can check it rather than re-derive it:
+
+- **Input validation** — every body and path param goes through a zod schema via `utils/validate.ts`; malformed input 400s with the first issue's message. The JSON body is capped at 1mb.
+- **CORS** — `CORS_ORIGINS` is an allowlist in production and wide open in development. Native clients send no `Origin`, so they are unaffected either way; an empty production allowlist denies cross-origin browser access rather than allowing it.
+- **User-level authorization** — `/sync` and `PATCH /auth/me` operate on `req.user!.id`; reports go through `ownedReport`, which 404s rather than 403s so ids cannot be probed. `/family/*` is unauthenticated **by product decision** (see "Family ID") and is bounded by the limiters above, add-only merges, and the exclusion of the owner's health profile — not by bolting on `authenticate`.
+- **Private file access** — the R2 bucket is private; downloads are short-lived presigned GETs, and `R2_PUBLIC_URL` is an explicit opt-in. `POST /reports` refuses any key outside the caller's `reports/<userId>/` prefix, then HEADs the object (`utils/r2.ts` → `headObject`) so a row cannot record a file that was never uploaded, and enforces the 25 MB cap against the object's real `ContentLength` rather than the client's `sizeBytes` claim.
+- **File validation** — mime types are an allowlist signed into the upload URL, and the size cap is checked both on the way in and against storage. The file bytes never pass through Node.
 
 ## Database
 
@@ -192,7 +206,7 @@ Routes — **all unauthenticated, and that is the design, not an oversight**:
 - `GET /family/:shareId` — the linked account's `{ medicines, familyMembers }`.
 - `POST /family/:shareId` — same payload and same add-only `mergeDomain` as `/sync`, returning the merged snapshot.
 
-**The Family ID is a bearer credential.** The requirement is that a relative who has just installed the app — with no account of their own — can type in a code and start recording medicines for whoever shared it; requiring `authenticate` would defeat exactly that. So anyone who learns a code gets read and append access to that account's medicines and family members. Three things bound it: the merge is add-only (`onConflictDoNothing` — no update, no delete, so the worst case is spurious rows rather than lost or altered ones), an id already owned by a third account is skipped rather than reassigned, and the owner's `health_profiles` row is never in scope. A future "these routes are unauthenticated" finding is a product decision to raise, not a bug to patch — `POST /connect` is rate-limited, which throttles guessing without changing the model, and the agreed hardening path beyond that is invite/accept with signed tokens, never simply bolting `authenticate` on.
+**The Family ID is a bearer credential.** The requirement is that a relative who has just installed the app — with no account of their own — can type in a code and start recording medicines for whoever shared it; requiring `authenticate` would defeat exactly that. So anyone who learns a code gets read and append access to that account's medicines and family members. Three things bound it: the merge is add-only (`onConflictDoNothing` — no update, no delete, so the worst case is spurious rows rather than lost or altered ones), an id already owned by a third account is skipped rather than reassigned, and the owner's `health_profiles` row is never in scope. A future "these routes are unauthenticated" finding is a product decision to raise, not a bug to patch — all three routes are rate-limited (`connectLimiter`, `familyReadLimiter`, `familyWriteLimiter`), which throttles guessing and spam without changing the model, and the agreed hardening path beyond that is invite/accept with signed tokens, never simply bolting `authenticate` on.
 
 Migration `0010` adds the column as **nullable**, backfills existing rows with a `DO $$ ... $$` plpgsql loop, and only then creates the unique index. The nullable add is forced: `ADD COLUMN ... NOT NULL` with no default fails outright on a non-empty table, so the constraint arrives as a unique index instead. The hand-edited backfill sits between the two, giving each codeless row an 8-character code from the same misread-resistant alphabet the app generates from and re-rolling until the candidate matches no row already assigned — so the `CREATE INDEX` that follows cannot fail on a clash. The index would have tolerated repeated `NULL`s anyway; the backfill is there because an account with no code could never be shared, not because the index demands a value.
 
@@ -204,7 +218,7 @@ Uploaded medical documents — lab results, scans, prescriptions. This is the on
 
 1. `POST /reports/upload-url` — `{ id, fileName, mimeType, sizeBytes }` → `{ storageKey, uploadUrl, thumbnailKey, thumbnailUploadUrl }`. Validates the type, builds the key from `req.user!.id` and a presigned PUT (5 min), and — for an image — signs a second key for its preview.
 2. The device PUTs the bytes **straight to storage** at `uploadUrl`, and its preview at `thumbnailUploadUrl`.
-3. `POST /reports` — `{ id, title, category, takenOn, file }` → `{ report }`, recording that the object exists. `file` carries `thumbnailKey` alongside `storageKey`.
+3. `POST /reports` — `{ id, title, category, takenOn, file }` → `{ report }`, recording that the object exists. `file` carries `thumbnailKey` alongside `storageKey`. Before inserting, the route HEADs the object and refuses with 404 when it is not there (the upload never happened) and 400 when its real `ContentLength` exceeds 25 MB — the body's `sizeBytes` is only the client's claim.
 
 The id comes from the client at step 1, which is why the object key and the row share it: the key is `reports/<userId>/<reportId>-<name>`, so retrying a failed upload overwrites the same object instead of orphaning the first attempt, and replaying the create hits `onConflictDoNothing` and returns the existing row rather than 500-ing.
 
@@ -215,7 +229,7 @@ The id comes from the client at step 1, which is why the object key and the row 
 
 The thumbnail key is client-supplied in exactly the same way the file key is, and is therefore checked the same way — see below.
 
-**Step 3 is where a client could try to attach someone else's object to its own row**, so it refuses any `storageKey` that does not start with `reports/<its own userId>/`. The preview key is checked by the same rule, because `thumbnailStorageKey` deliberately puts it under the same prefix — one prefix check covers both, where a second, parallel rule is a second place for the two to drift apart. That prefix check is the whole authorization for the object — storage itself has no idea who is calling.
+**Step 3 is where a client could try to attach someone else's object to its own row**, so it refuses any `storageKey` that does not start with `reports/<its own userId>/`. The preview key is checked by the same rule, because `thumbnailStorageKey` deliberately puts it under the same prefix — one prefix check covers both, where a second, parallel rule is a second place for the two to drift apart. That prefix check is the whole authorization for the object — storage itself has no idea who is calling. Presence and size are separate questions, answered by `headObject` against storage; the thumbnail is deliberately not HEADed, since a missing preview is cosmetic and a second storage call on every create buys nothing.
 
 The rest of the surface:
 
@@ -247,4 +261,4 @@ Remaining work: per-resource CRUD (health profiles, medicines, family members) a
 
 The client renews its own tokens now: `src/lib/api.ts` retries an authenticated 401 once against `/auth/refresh`, single-flight so concurrent 401s share one rotation. What is still missing is a background re-sync — nothing retries a failed sync while the app is closed.
 
-On `/family`, `POST /connect` is now rate-limited (see "Rate limiting"), so the remaining follow-up is hardening rather than features: invite/accept with signed tokens, which would replace the bearer-code model rather than throttle it. Until then the 8-character code is the whole credential.
+On `/family`, all three routes are rate-limited (see "Rate limiting"), so the remaining follow-up is hardening rather than features: invite/accept with signed tokens, which would replace the bearer-code model rather than throttle it. Until then the 8-character code is the whole credential.

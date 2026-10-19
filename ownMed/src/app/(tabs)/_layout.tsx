@@ -1,9 +1,9 @@
 import { Tabs } from 'expo-router';
 import {
+  BookOpen,
   HeartPulse,
   House,
   LayoutDashboard,
-  LogIn,
   Settings,
 } from 'lucide-react-native';
 
@@ -67,14 +67,17 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="sign-in"
+        name="how-to-use"
         options={{
-          title: 'Account',
+          title: 'How to use',
           tabBarIcon: ({ color, size }) => (
-            <LogIn color={color} size={size} strokeWidth={2} />
+            <BookOpen color={color} size={size} strokeWidth={2} />
           ),
         }}
       />
+      {/* Sign-in is reached from the Home header and Settings, so it has no
+          dedicated tab of its own. */}
+      <Tabs.Screen name="sign-in" options={{ href: null }} />
       <Tabs.Screen name="sign-up" options={{ href: null }} />
       <Tabs.Screen name="forgot-password" options={{ href: null }} />
     </Tabs>
