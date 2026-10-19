@@ -5,7 +5,11 @@ import { z } from "zod";
 import { db, users } from "../db/index.js";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { connectLimiter } from "../utils/rateLimit.js";
+import {
+  connectLimiter,
+  familyReadLimiter,
+  familyWriteLimiter,
+} from "../utils/rateLimit.js";
 import { normalizeShareId } from "../utils/shareId.js";
 import { validate } from "../utils/validate.js";
 import { domainSnapshot, domainWriteSchema, mergeDomain } from "./sync.js";
@@ -67,6 +71,7 @@ familyRouter.post(
 /** The linked account's medicines and family members. */
 familyRouter.get(
   "/:shareId",
+  familyReadLimiter,
   asyncHandler(async (req, res) => {
     const shareId = validate(shareIdSchema, req.params.shareId);
     const user = await userByShareId(shareId);
@@ -81,6 +86,7 @@ familyRouter.get(
  */
 familyRouter.post(
   "/:shareId",
+  familyWriteLimiter,
   asyncHandler(async (req, res) => {
     const shareId = validate(shareIdSchema, req.params.shareId);
     const user = await userByShareId(shareId);

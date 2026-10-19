@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import helmet from "helmet";
 
 import { env } from "./config/env.js";
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -27,6 +28,20 @@ if (env.trustProxy) {
  * production denies cross-origin browser access rather than allowing it.
  */
 app.use(cors({ origin: env.isProduction ? env.corsOrigins : true }));
+
+/**
+ * Security headers, including HSTS. TLS itself is terminated at the deploy
+ * proxy; this is the response-header half of the same story, and it is what
+ * tells a browser to keep using HTTPS for this host afterwards.
+ *
+ * CSP is off because there is no HTML here — every response is JSON, and the
+ * policy Helmet would send only ever applies to a document. The rest of the
+ * defaults (`Strict-Transport-Security`, `X-Content-Type-Options: nosniff`,
+ * `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Resource-Policy`) are
+ * harmless to native clients, which ignore headers they have no use for.
+ */
+app.use(helmet({ contentSecurityPolicy: false }));
+
 // A sync payload is the largest body this API accepts, and it is a few hundred
 // KB at most; the default cap is generous enough to be worth tightening.
 app.use(express.json({ limit: "1mb" }));

@@ -1,7 +1,11 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+<<<<<<< HEAD
   ListObjectsV2Command,
+=======
+  HeadObjectCommand,
+>>>>>>> 366fa86b3dde736b725c81fff035bb8227797cc7
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -146,6 +150,37 @@ export function presignDownload(key: string): Promise<string> {
     new GetObjectCommand({ Bucket: env.r2Bucket, Key: key }),
     { expiresIn: DOWNLOAD_URL_TTL },
   );
+}
+
+/**
+ * Ask storage whether an object is really there, and how big it is.
+ *
+ * The bytes are PUT device-to-R2, so this is the only place the server can
+ * confirm the upload actually happened — and `ContentLength` is the object's
+ * real size, where the client's `sizeBytes` is only what it claimed. A report
+ * row written without this check can point at nothing, which surfaces to the
+ * user as a document that fails to open.
+ *
+ * A missing object is an expected answer, not an error. Anything else is
+ * rethrown so a storage outage becomes a 5xx rather than being misread as "the
+ * client never uploaded".
+ */
+export async function headObject(
+  key: string,
+): Promise<{ exists: false } | { exists: true; sizeBytes: number }> {
+  try {
+    const head = await client().send(
+      new HeadObjectCommand({ Bucket: env.r2Bucket, Key: key }),
+    );
+    return { exists: true, sizeBytes: head.ContentLength ?? 0 };
+  } catch (error) {
+    // A HEAD response has no body for the SDK to parse, so a 404 arrives via
+    // `$metadata` rather than as the named `NoSuchKey` GET errors carry.
+    const status = (error as { $metadata?: { httpStatusCode?: number } })
+      .$metadata?.httpStatusCode;
+    if (status === 404) return { exists: false };
+    throw error;
+  }
 }
 
 /**
